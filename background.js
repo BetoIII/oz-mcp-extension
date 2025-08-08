@@ -97,38 +97,41 @@ async function openUpgradeTab() {
 
 // Perform the OZ check via background to avoid CORS issues
 async function performOzLookup(params) {
-  const token = await getAuthToken();
-  const search = new URLSearchParams();
-  if (params.address) search.set('address', params.address);
-  if (typeof params.lat === 'number' && typeof params.lon === 'number') {
-    search.set('lat', String(params.lat));
-    search.set('lon', String(params.lon));
-  }
+  try {
+    const token = await getAuthToken();
+    const search = new URLSearchParams();
+    if (params.address) search.set('address', params.address);
+    if (typeof params.lat === 'number' && typeof params.lon === 'number') {
+      search.set('lat', String(params.lat));
+      search.set('lon', String(params.lon));
+    }
 
-  const res = await fetch(`${BASE_URL}${CHECK_ENDPOINT}?${search.toString()}`, {
-    method: 'GET',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'X-OZ-Extension': chrome.runtime.getManifest().version || 'unknown',
-    },
-  });
+    const res = await fetch(`${BASE_URL}${CHECK_ENDPOINT}?${search.toString()}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'X-OZ-Extension': chrome.runtime.getManifest().version || 'unknown',
+      },
+    });
 
-  const text = await res.text();
-  let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
+    const text = await res.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
 
-  if (res.status === 429) {
-    // Forward structured error
-    const code = data?.code || 'RATE_LIMITED';
-    return { error: true, status: 429, code, message: 'Rate limited' };
+    if (res.status === 429) {
+      const code = data?.code || 'RATE_LIMITED';
+      return { error: true, status: 429, code, message: 'Rate limited' };
+    }
+    if (res.status >= 500) {
+      return { error: true, status: res.status, message: data?.details || 'Service unavailable' };
+    }
+    if (!res.ok) {
+      return { error: true, status: res.status, message: 'Request failed' };
+    }
+    return data || {};
+  } catch (err) {
+    return { error: true, status: 0, message: 'Network error' };
   }
-  if (res.status >= 500) {
-    return { error: true, status: res.status, message: data?.details || 'Service unavailable' };
-  }
-  if (!res.ok) {
-    return { error: true, status: res.status, message: 'Request failed' };
-  }
-  return data || {};
 }
 
 // Primary message router
@@ -185,7 +188,12 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (!selectedText) return;
 
   (async () => {
-    const response = await performOzLookup({ address: selectedText });
+    let response;
+    try {
+      response = await performOzLookup({ address: selectedText });
+    } catch (e) {
+      response = { error: true, status: 0, message: 'Network error' };
+    }
 
     // pipe result back to the active tab to render toast
     if (tab?.id) {

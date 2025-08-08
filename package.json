@@ -1,0 +1,22 @@
+{
+  "name": "oz-mcp-extension",
+  "version": "1.0.0",
+  "description": "A Chrome extension built with MCP integration",
+  "scripts": {
+    "build": "echo 'Extension built successfully'",
+    "lint": "echo 'Linting extension files'",
+    "zip": "zip -r oz-mcp-extension.zip . -x '*.git*' 'node_modules/*' '*.DS_Store' 'package-lock.json'"
+  },
+  "keywords": [
+    "chrome-extension",
+    "mcp",
+    "browser-extension"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "."
+  }
+}

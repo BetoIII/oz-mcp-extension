@@ -185,13 +185,24 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (!selectedText) return;
 
   (async () => {
-    const response = await new Promise((resolve) => {
-      chrome.runtime.sendMessage({ type: 'OZ_LOOKUP', address: selectedText }, resolve);
-    });
+    const response = await performOzLookup({ address: selectedText });
 
     // pipe result back to the active tab to render toast
     if (tab?.id) {
       chrome.tabs.sendMessage(tab.id, { type: 'OZ_CONTEXT_RESULT', query: selectedText, result: response });
     }
   })();
+});
+
+// Toolbar click → trigger a manual scan on supported domains
+chrome.action.onClicked.addListener((tab) => {
+  if (!tab?.id) return;
+  const url = tab.url || '';
+  const supported = /https:\/\/(?:[^/]*\.)?(zillow|loopnet|crexi)\.com\//i.test(url);
+  if (!supported) {
+    // best-effort toast if content script is present; otherwise no-op
+    chrome.tabs.sendMessage(tab.id, { type: 'OZ_TOAST', text: 'This site is not supported' });
+    return;
+  }
+  chrome.tabs.sendMessage(tab.id, { type: 'OZ_MANUAL_SCAN' });
 });

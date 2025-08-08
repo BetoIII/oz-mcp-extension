@@ -12,17 +12,30 @@
   "host_permissions": [
     "https://oz-mcp.vercel.app/*"
   ],
+  "action": {
+    "default_title": "OZ‑MCP: Scan this page",
+    "default_icon": {
+      "16": "icons/oz-mcp-pin-icon.png",
+      "32": "icons/oz-mcp-pin-icon.png",
+      "48": "icons/oz-mcp-pin-icon.png",
+      "128": "icons/oz-mcp-pin-icon.png"
+    }
+  },
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [
     {
       "matches": [
+        "https://zillow.com/*",
         "https://*.zillow.com/*",
+        "https://loopnet.com/*",
         "https://*.loopnet.com/*",
+        "https://crexi.com/*",
         "https://*.crexi.com/*"
       ],
       "run_at": "document_idle",
+      "all_frames": true,
       "js": ["content.js"]
     }
   ],

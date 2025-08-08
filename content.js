@@ -166,7 +166,16 @@ ensureStyles();
 scheduleScan();
 
 // Context menu result handler → show toast near selection
-chrome.runtime.onMessage.addListener((message) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === 'OZ_MANUAL_SCAN') {
+    checksUsed = 0; // allow another batch
+    scheduleScan();
+    return; // no async
+  }
+  if (message?.type === 'OZ_TOAST' && message.text) {
+    showToast(message.text);
+    return; // no async
+  }
   if (message?.type !== 'OZ_CONTEXT_RESULT') return;
   const { query, result } = message;
   if (!result || result.error) {
@@ -175,15 +184,16 @@ chrome.runtime.onMessage.addListener((message) => {
     } else {
       showToastNearSelection('Service unavailable. Try again later.');
     }
-    return;
+    return; // no async
   }
   if (result.addressNotFound) {
     showToastNearSelection('Address not found');
-    return;
+    return; // no async
   }
   if (result.isInOpportunityZone) {
     showToastNearSelection('In an Opportunity Zone');
   } else {
     showToastNearSelection('Not in an Opportunity Zone');
   }
+  // no async response
 });

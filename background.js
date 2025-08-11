@@ -187,6 +187,11 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   const selectedText = (info.selectionText || '').trim();
   if (!selectedText) return;
 
+  // Show loading indicator immediately
+  if (tab?.id) {
+    chrome.tabs.sendMessage(tab.id, { type: 'OZ_CONTEXT_LOADING', query: selectedText });
+  }
+
   (async () => {
     let response;
     try {

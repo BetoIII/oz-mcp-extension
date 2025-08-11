@@ -97,6 +97,22 @@ async function openUpgradeTab() {
   chrome.tabs.create({ url: `${BASE_URL}/pricing?upgrade=chrome` });
 }
 
+// Safe send to content script: resolves false if no receiver
+function safeSend(tabId, message) {
+  return new Promise((resolve) => {
+    if (!tabId) return resolve(false);
+    try {
+      chrome.tabs.sendMessage(tabId, message, () => {
+        // Read lastError to silence "Unchecked runtime.lastError"
+        const hadError = Boolean(chrome.runtime.lastError);
+        resolve(!hadError);
+      });
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
 // Try to resolve an address from the current tab URL using production listing-address service
 async function resolveAddressFromUrl(listingUrl) {
   try {
@@ -147,6 +163,11 @@ function promptForAddress(tabId) {
     let settled = false;
     try {
       chrome.tabs.sendMessage(tabId, { type: 'OZ_PROMPT_FOR_ADDRESS' }, (resp) => {
+        // consume lastError to avoid warnings
+        if (chrome.runtime.lastError) {
+          if (!settled) { settled = true; resolve(null); }
+          return;
+        }
         if (settled) return;
         settled = true;
         const address = (resp && typeof resp.address === 'string') ? resp.address.trim() : '';
@@ -165,6 +186,10 @@ function getCurrentSelection(tabId) {
     let settled = false;
     try {
       chrome.tabs.sendMessage(tabId, { type: 'OZ_GET_SELECTION' }, (resp) => {
+        if (chrome.runtime.lastError) {
+          if (!settled) { settled = true; resolve(null); }
+          return;
+        }
         if (settled) return;
         settled = true;
         const sel = (resp && typeof resp.selection === 'string') ? resp.selection.trim() : '';
@@ -183,6 +208,10 @@ function requestUserAddressConfirmation(tabId, address, { normalized = false } =
     let settled = false;
     try {
       chrome.tabs.sendMessage(tabId, { type: 'OZ_CONFIRM_ADDRESS', address, normalized }, (resp) => {
+        if (chrome.runtime.lastError) {
+          if (!settled) { settled = true; resolve({ action: 'cancel' }); }
+          return;
+        }
         if (settled) return;
         settled = true;
         resolve(resp || { action: 'cancel' });
@@ -234,7 +263,7 @@ async function runAddressCheckFlow(tab, highlightedText) {
   const urlResult = await resolveAddressFromUrl(url);
   if (urlResult?.error && urlResult.status === 429) {
     openUpgradeTab();
-    if (tabId) chrome.tabs.sendMessage(tabId, { type: 'OZ_TOAST', text: 'Over limit — upgrade for more' });
+    if (tabId) await safeSend(tabId, { type: 'OZ_TOAST', text: 'Over limit — upgrade for more' });
     return;
   }
   if (!urlResult?.error && urlResult?.address) {
@@ -253,7 +282,7 @@ async function runAddressCheckFlow(tab, highlightedText) {
   }
 
   if (!chosenAddress) {
-    if (tabId) chrome.tabs.sendMessage(tabId, { type: 'OZ_TOAST', text: 'No address provided' });
+    if (tabId) await safeSend(tabId, { type: 'OZ_TOAST', text: 'No address provided' });
     return;
   }
 
@@ -266,11 +295,11 @@ async function runAddressCheckFlow(tab, highlightedText) {
       const norm = await normalizeAddressViaGeocode(first.address || chosenAddress);
       if (norm?.error && norm.status === 429) {
         openUpgradeTab();
-        chrome.tabs.sendMessage(tabId, { type: 'OZ_TOAST', text: 'Over limit — upgrade for more' });
+        await safeSend(tabId, { type: 'OZ_TOAST', text: 'Over limit — upgrade for more' });
         return;
       }
       if (norm?.error) {
-        chrome.tabs.sendMessage(tabId, { type: 'OZ_TOAST', text: 'Could not normalize address' });
+        await safeSend(tabId, { type: 'OZ_TOAST', text: 'Could not normalize address' });
         return;
       }
       const normalizedAddress = norm.address || first.address || chosenAddress;
@@ -288,7 +317,7 @@ async function runAddressCheckFlow(tab, highlightedText) {
   const key = normalizeAddress(chosenAddress);
   const cached = await getCachedResult(key);
   if (cached) {
-    if (tabId) chrome.tabs.sendMessage(tabId, { type: 'OZ_CONTEXT_RESULT', query: chosenAddress, result: { fromCache: true, ...cached } });
+    if (tabId) await safeSend(tabId, { type: 'OZ_CONTEXT_RESULT', query: chosenAddress, result: { fromCache: true, ...cached } });
     return;
   }
 
@@ -296,13 +325,13 @@ async function runAddressCheckFlow(tab, highlightedText) {
   let result = await performOzLookup({ address: chosenAddress });
   if (result?.error && result.status === 429) {
     openUpgradeTab();
-    if (tabId) chrome.tabs.sendMessage(tabId, { type: 'OZ_CONTEXT_RESULT', query: chosenAddress, result: { error: true, status: 429, code: result.code } });
+    if (tabId) await safeSend(tabId, { type: 'OZ_CONTEXT_RESULT', query: chosenAddress, result: { error: true, status: 429, code: result.code } });
     return;
   }
   if (!result?.error && !result?.addressNotFound) {
     await setCachedResult(key, result);
   }
-  if (tabId) chrome.tabs.sendMessage(tabId, { type: 'OZ_CONTEXT_RESULT', query: chosenAddress, result });
+  if (tabId) await safeSend(tabId, { type: 'OZ_CONTEXT_RESULT', query: chosenAddress, result });
 }
 
 // Perform the OZ check via background to avoid CORS issues
@@ -400,26 +429,19 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     try {
       await runAddressCheckFlow(tab, selectedText);
     } catch (e) {
-      if (tab?.id) chrome.tabs.sendMessage(tab.id, { type: 'OZ_TOAST', text: 'Service unavailable. Try again later.' });
+      if (tab?.id) await safeSend(tab.id, { type: 'OZ_TOAST', text: 'Service unavailable. Try again later.' });
     }
   })();
 });
 
-// Toolbar click → trigger a manual scan on supported domains
+// Toolbar click → run the universal flow on any site (content script may not exist on restricted pages)
 chrome.action.onClicked.addListener((tab) => {
   if (!tab?.id) return;
-  const url = tab.url || '';
-  const supported = /https:\/\/(?:[^/]*\.)?(zillow|loopnet|crexi)\.com\//i.test(url);
-  if (!supported) {
-    chrome.tabs.sendMessage(tab.id, { type: 'OZ_TOAST', text: 'This site is not supported' });
-    return;
-  }
-
   (async () => {
     try {
       await runAddressCheckFlow(tab, null);
     } catch (e) {
-      chrome.tabs.sendMessage(tab.id, { type: 'OZ_TOAST', text: 'Service unavailable. Try again later.' });
+      await safeSend(tab.id, { type: 'OZ_TOAST', text: 'Service unavailable. Try again later.' });
     }
   })();
 });

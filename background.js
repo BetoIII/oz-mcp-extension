@@ -1,6 +1,11 @@
 // OZ-MCP Background service worker (MV3)
 // Responsibilities: temp-key lifecycle, OZ lookup networking, LRU cache, context menu, message routing
 
+// Feature flags
+const FEATURE_FLAGS = {
+  USE_LISTING_ADDRESS_FALLBACK: false, // Set to true to enable listing-address API as fallback
+};
+
 const BASE_URL = 'https://oz-mcp.vercel.app';
 const CHECK_ENDPOINT = '/api/opportunity-zones/check';
 const LISTING_ADDRESS_ENDPOINT = '/api/listing-address';
@@ -150,6 +155,31 @@ function debounce(func, wait) {
 // Helper function for delays
 function sleep(ms) { 
   return new Promise(resolve => setTimeout(resolve, ms)); 
+}
+
+// Address extraction using same regex as content script
+const ADDRESS_REGEX = /\b(\d{1,6})\s+([A-Za-z0-9'.\-]+(?:\s+[A-Za-z0-9'.\-]+)*)\s+(Ave|Avenue|St|Street|Rd|Road|Blvd|Boulevard|Ln|Lane|Dr|Drive|Ct|Court|Pl|Place|Ter|Terrace|Way|Pkwy|Parkway)\b[ ,]*([A-Za-z .'-]+)?[ ,]+([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b/;
+
+// Ask content script to scan page for addresses using regex
+function getAddressesFromPage(tabId) {
+  return new Promise((resolve) => {
+    let settled = false;
+    try {
+      chrome.tabs.sendMessage(tabId, { type: 'OZ_GET_PAGE_ADDRESSES' }, (resp) => {
+        if (chrome.runtime.lastError) {
+          if (!settled) { settled = true; resolve([]); }
+          return;
+        }
+        if (settled) return;
+        settled = true;
+        const addresses = (resp && Array.isArray(resp.addresses)) ? resp.addresses : [];
+        resolve(addresses);
+      });
+    } catch {
+      resolve([]);
+    }
+    setTimeout(() => { if (!settled) { settled = true; resolve([]); } }, 3000);
+  });
 }
 
 // Utility: get and set in local storage (avoid sync for quota)
@@ -389,7 +419,7 @@ async function normalizeAddressViaGeocode(address) {
   }
 }
 
-// Full flow: 1) URL → listing-address, 2) highlighted selection, 3) manual prompt → OZ check
+// Full flow: 1) Regex scan, 2) listing-address fallback (if enabled), 3) highlighted selection, 4) manual prompt → OZ check
 async function runAddressCheckFlow(tab, highlightedText) {
   const tabId = tab?.id;
   const url = tab?.url || '';
@@ -397,35 +427,54 @@ async function runAddressCheckFlow(tab, highlightedText) {
 
   // Show loading indicator for the entire flow
   if (tabId) {
-    await safeSend(tabId, { type: 'OZ_TOAST', text: 'Extracting address from page...', loading: true });
+    await safeSend(tabId, { type: 'OZ_TOAST', text: 'Scanning page for addresses...', loading: true });
   }
 
-  // Step 1: try listing-address from URL
-  const urlResult = await resolveAddressFromUrl(url);
-  if (urlResult?.error && urlResult.status === 429) {
-    openUpgradeTab();
-    if (tabId) {
-      await safeSend(tabId, { type: 'OZ_HIDE_LOADING_TOAST' });
-      await safeSend(tabId, { type: 'OZ_TOAST', text: 'Over limit — upgrade for more' });
-    }
-    return;
-  }
-  if (!urlResult?.error && urlResult?.address) {
-    chosenAddress = urlResult.address;
-    // Debug: Show what address was detected
-    if (tabId) {
-      await safeSend(tabId, { type: 'OZ_TOAST', text: `Detected address: ${chosenAddress.substring(0, 50)}...` });
-      await sleep(1500); // Short delay to show the debug message
+  // Step 1: try regex scan of page content (fast and reliable)
+  if (tabId) {
+    const foundAddresses = await getAddressesFromPage(tabId);
+    if (foundAddresses.length > 0) {
+      // Use the first address found
+      chosenAddress = foundAddresses[0];
+      // Debug: Show what address was detected
+      if (tabId) {
+        await safeSend(tabId, { type: 'OZ_TOAST', text: `Found address: ${chosenAddress.substring(0, 50)}...` });
+        await sleep(1500); // Short delay to show the debug message
+      }
     }
   }
 
-  // Step 2: user-highlighted selection (if URL resolution failed)
+  // Step 2: try listing-address from URL (only if feature flag is enabled and no address found yet)
+  if (!chosenAddress && FEATURE_FLAGS.USE_LISTING_ADDRESS_FALLBACK) {
+    if (tabId) {
+      await safeSend(tabId, { type: 'OZ_TOAST', text: 'Trying advanced address extraction...', loading: true });
+    }
+    const urlResult = await resolveAddressFromUrl(url);
+    if (urlResult?.error && urlResult.status === 429) {
+      openUpgradeTab();
+      if (tabId) {
+        await safeSend(tabId, { type: 'OZ_HIDE_LOADING_TOAST' });
+        await safeSend(tabId, { type: 'OZ_TOAST', text: 'Over limit — upgrade for more' });
+      }
+      return;
+    }
+    if (!urlResult?.error && urlResult?.address) {
+      chosenAddress = urlResult.address;
+      // Debug: Show what address was detected
+      if (tabId) {
+        await safeSend(tabId, { type: 'OZ_TOAST', text: `API found address: ${chosenAddress.substring(0, 50)}...` });
+        await sleep(1500); // Short delay to show the debug message
+      }
+    }
+  }
+
+  // Step 3: user-highlighted selection (if no address found yet)
   if (!chosenAddress) {
     const selection = highlightedText || (tabId ? await getCurrentSelection(tabId) : null);
     if (selection) chosenAddress = selection;
   }
 
-  // Step 3: manual inline entry prompt
+  // Step 4: manual inline entry prompt
   if (!chosenAddress && tabId) {
     chosenAddress = await promptForAddress(tabId);
   }
@@ -443,14 +492,6 @@ async function runAddressCheckFlow(tab, highlightedText) {
   if (tabId) {
     // Hide loading toast before showing confirmation
     await safeSend(tabId, { type: 'OZ_HIDE_LOADING_TOAST' });
-    
-    // Debug: Check if content script is available
-    const contentScriptAvailable = await safeSend(tabId, { type: 'OZ_PING' });
-    if (!contentScriptAvailable) {
-      await safeSend(tabId, { type: 'OZ_TOAST', text: 'Content script not available - trying fallback' });
-      // Could implement a fallback here like opening the address in a new dialog
-    }
-    
     const first = await requestUserAddressConfirmation(tabId, chosenAddress, { normalized: false });
     if (first?.action === 'cancel') return;
     if (first?.action === 'edit') {

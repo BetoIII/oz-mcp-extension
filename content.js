@@ -489,10 +489,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ pong: true });
     return true; // async
   }
+  if (message?.type === 'OZ_GET_PAGE_ADDRESSES') {
+    // Scan page for addresses using same logic as automatic scanning
+    const addresses = [];
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const text = (node.nodeValue || '').trim();
+        if (!text || text.length > 200) return NodeFilter.FILTER_REJECT;
+        if (!ADDRESS_REGEX.test(text)) return NodeFilter.FILTER_SKIP;
+        const parent = node.parentElement;
+        if (!parent || !isVisible(parent)) return NodeFilter.FILTER_SKIP;
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+
+    while (walker.nextNode()) {
+      const text = walker.currentNode.nodeValue;
+      const m = text.match(ADDRESS_REGEX);
+      if (m) addresses.push(m[0]);
+    }
+
+    // Dedupe addresses
+    const seen = new Set();
+    const uniqueAddresses = addresses.filter(addr => {
+      const key = addr.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    sendResponse({ addresses: uniqueAddresses });
+    return true; // async
+  }
   if (message?.type === 'OZ_CONFIRM_ADDRESS') {
-    // Debug: Show that we received the confirmation request
-    showToast(`Confirming: ${(message.address || '').substring(0, 30)}...`);
-    
     (async () => {
       const resp = await showConfirmAddressToast(message.address || '', { normalized: !!message.normalized });
       // Only block automatic scanning if user confirms or edits (not if they cancel)

@@ -1,9 +1,15 @@
 // OZ-MCP Content Script: scans pages for candidate addresses, injects badges, handles context menu toast
 
-const MAX_CHECKS_PER_PAGE = 5;
+const MAX_CHECKS_PER_PAGE = 2; // reduced to minimize geocoding bursts
 const SCAN_DEBOUNCE_MS = 800;
+const BETWEEN_CHECK_DELAY_MS = 1500; // serialize with ~1.5s delay
+const RATE_LIMIT_BACKOFF_MS = 90 * 1000; // 90s pause on 429/GEOCODER_RATE_LIMITED
 const scannedAddresses = new Set();
 let checksUsed = 0;
+let pausedUntilTs = 0;
+let queueProcessing = false;
+let manualLookupInProgress = false;
+const addressQueue = [];
 
 // Conservative US address regex (very rough, tuned to avoid massive false positives)
 const ADDRESS_REGEX = /\b(\d{1,6})\s+([A-Za-z0-9'.\-]+(?:\s+[A-Za-z0-9'.\-]+)*)\s+(Ave|Avenue|St|Street|Rd|Road|Blvd|Boulevard|Ln|Lane|Dr|Drive|Ct|Court|Pl|Place|Ter|Terrace|Way|Pkwy|Parkway)\b[ ,]*([A-Za-z .'-]+)?[ ,]+([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b/;
@@ -111,8 +117,80 @@ function dedupeAndLimit(arr) {
   return out;
 }
 
+function isPaused() {
+  return Date.now() < pausedUntilTs;
+}
+
+function enqueueAddress(address) {
+  const key = address.toLowerCase();
+  if (scannedAddresses.has(address)) return;
+  scannedAddresses.add(address);
+  addressQueue.push(address);
+  processQueue();
+}
+
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+function isRateLimitedResponse(resp) {
+  if (!resp) return false;
+  if (resp.status === 429) return true;
+  if (resp.status === 500 && typeof resp.message === 'string' && /429/gi.test(resp.message)) return true;
+  return false;
+}
+
+async function processQueue() {
+  if (queueProcessing) return;
+  queueProcessing = true;
+  try {
+    while (addressQueue.length > 0) {
+      if (checksUsed >= MAX_CHECKS_PER_PAGE) break;
+      if (isPaused()) {
+        // wait until pause expires
+        const waitMs = Math.max(50, pausedUntilTs - Date.now());
+        await sleep(waitMs);
+        continue;
+      }
+
+      const address = addressQueue.shift();
+      try {
+        const resp = await new Promise((resolve) => {
+          chrome.runtime.sendMessage({ type: 'OZ_LOOKUP', address }, (r) => resolve(r));
+        });
+
+        if (!resp || resp.error) {
+          if (isRateLimitedResponse(resp)) {
+            pausedUntilTs = Date.now() + RATE_LIMIT_BACKOFF_MS;
+            showToast('Rate limited — pausing checks for 90s');
+            break; // exit loop; will resume after pause
+          }
+          if (resp?.status >= 500) {
+            showToast('Service unavailable. Try again later.');
+          }
+        } else {
+          if (!resp.addressNotFound && resp.isInOpportunityZone) {
+            const node = findTextNode(document.body, address);
+            if (node && node.parentElement) {
+              const badge = createBadge(resp);
+              node.parentElement.appendChild(badge);
+            }
+          }
+          checksUsed += 1;
+        }
+      } catch (e) {
+        // ignore, move on
+      }
+
+      await sleep(BETWEEN_CHECK_DELAY_MS);
+    }
+  } finally {
+    queueProcessing = false;
+  }
+}
+
 function scanForAddresses() {
   if (checksUsed >= MAX_CHECKS_PER_PAGE) return;
+  if (isPaused()) return;
+  if (manualLookupInProgress) return;
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const text = (node.nodeValue || '').trim();
@@ -131,33 +209,8 @@ function scanForAddresses() {
     if (m) candidates.push(m[0]);
   }
 
-  const toCheck = dedupeAndLimit(candidates).filter((addr) => !scannedAddresses.has(addr));
-  for (const address of toCheck) {
-    scannedAddresses.add(address);
-    if (checksUsed >= MAX_CHECKS_PER_PAGE) break;
-    checksUsed += 1;
-
-    chrome.runtime.sendMessage({ type: 'OZ_LOOKUP', address }, (resp) => {
-      if (!resp || resp.error) {
-        if (resp?.status === 429) {
-          showToast('Over limit — upgrade for more');
-        } else if (resp?.status >= 500) {
-          showToast('Service unavailable. Try again later.');
-        }
-        return;
-      }
-      if (resp.addressNotFound) return;
-      if (resp.isInOpportunityZone) {
-        // inject badge after the text node's parent
-        const range = document.createRange();
-        const node = findTextNode(document.body, address);
-        if (node && node.parentElement) {
-          const badge = createBadge(resp);
-          node.parentElement.appendChild(badge);
-        }
-      }
-    });
-  }
+  const toEnqueue = dedupeAndLimit(candidates).filter((addr) => !scannedAddresses.has(addr));
+  for (const address of toEnqueue) enqueueAddress(address);
 }
 
 function findTextNode(root, text) {
@@ -179,43 +232,42 @@ function getSelectionText() {
 function promptForAddressInline() {
   return new Promise((resolve) => {
     ensureStyles();
-    const overlay = document.createElement('div');
-    overlay.className = 'oz-mcp-prompt-overlay';
-    const box = document.createElement('div');
-    box.className = 'oz-mcp-prompt';
-    const title = document.createElement('h4');
-    title.textContent = 'Enter an address to check';
+    // Ensure only one prompt/confirm UI is visible at a time
+    document.querySelectorAll('.oz-mcp-confirm').forEach((e) => e.remove());
+
+    // Reuse the compact confirm-style toast positioned near the extension icon (top-right)
+    const wrap = document.createElement('div');
+    wrap.className = 'oz-mcp-confirm';
+
+    const label = document.createElement('span');
+    label.textContent = 'Enter address:';
+
     const input = document.createElement('input');
     input.placeholder = 'e.g., 1600 Pennsylvania Ave NW, Washington, DC 20500';
     const prefill = getSelectionText();
     if (prefill) input.value = prefill;
-    const row = document.createElement('div');
-    row.className = 'row';
-    const cancel = document.createElement('button');
-    cancel.className = 'oz-mcp-btn cancel';
-    cancel.textContent = 'Cancel';
-    const ok = document.createElement('button');
-    ok.className = 'oz-mcp-btn ok';
-    ok.textContent = 'Check';
-    row.appendChild(cancel);
-    row.appendChild(ok);
-    box.appendChild(title);
-    box.appendChild(input);
-    box.appendChild(row);
-    overlay.appendChild(box);
-    document.body.appendChild(overlay);
 
-    function cleanup(val) {
-      overlay.remove();
-      resolve(val);
-    }
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'btn edit';
+    cancelBtn.textContent = 'Cancel';
 
-    ok.addEventListener('click', () => {
+    const okBtn = document.createElement('button');
+    okBtn.className = 'btn ok';
+    okBtn.textContent = 'Check';
+
+    wrap.appendChild(label);
+    wrap.appendChild(input);
+    wrap.appendChild(cancelBtn);
+    wrap.appendChild(okBtn);
+    document.body.appendChild(wrap);
+
+    function cleanup(val) { wrap.remove(); resolve(val); }
+
+    okBtn.addEventListener('click', () => {
       const val = (input.value || '').trim();
       cleanup(val || null);
     });
-    cancel.addEventListener('click', () => cleanup(null));
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(null); });
+    cancelBtn.addEventListener('click', () => cleanup(null));
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         const val = (input.value || '').trim();
@@ -310,6 +362,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'OZ_CONFIRM_ADDRESS') {
     (async () => {
       const resp = await showConfirmAddressToast(message.address || '', { normalized: !!message.normalized });
+      // Only block automatic scanning if user confirms or edits (not if they cancel)
+      if (resp?.action === 'confirm' || resp?.action === 'edit') {
+        manualLookupInProgress = true;
+      }
       sendResponse(resp);
     })();
     return true; // async
@@ -322,12 +378,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'OZ_PROMPT_FOR_ADDRESS') {
     (async () => {
       const address = await promptForAddressInline();
+      // Only block automatic scanning if user provided an address
+      if (address) {
+        manualLookupInProgress = true;
+      }
       sendResponse({ address });
     })();
     return true; // keep the channel open for async response
   }
   if (message?.type !== 'OZ_CONTEXT_RESULT') return;
   const { query, result } = message;
+  // Manual lookup is complete, re-enable automatic scanning
+  manualLookupInProgress = false;
+  
   if (!result || result.error) {
     if (result?.status === 429) {
       showToastNearSelection('Over limit — upgrade for more');

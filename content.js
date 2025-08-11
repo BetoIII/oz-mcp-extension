@@ -18,6 +18,23 @@ function ensureStyles() {
 .oz-mcp-badge:hover .oz-mcp-tooltip{opacity:1;visibility:visible}
 .oz-mcp-tooltip{position:absolute;transform:translateY(6px);background:#111;color:#fff;padding:6px 8px;border-radius:6px;font-size:11px;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.3);opacity:0;visibility:hidden;transition:opacity .15s;z-index:2147483647}
 .oz-mcp-toast{position:fixed;z-index:2147483647;left:50%;transform:translateX(-50%);bottom:24px;background:#111;color:#fff;padding:10px 14px;border-radius:8px;font-size:13px;box-shadow:0 4px 16px rgba(0,0,0,.35)}
+/* Confirm toast near icon */
+.oz-mcp-confirm{position:fixed;z-index:2147483647;right:12px;top:12px;background:#111;color:#fff;padding:10px 12px;border-radius:10px;font-size:13px;box-shadow:0 6px 20px rgba(0,0,0,.35);display:flex;gap:8px;align-items:center;max-width:92vw}
+.oz-mcp-confirm .addr{font-weight:600;}
+.oz-mcp-confirm input{background:#1a1a1a;border:1px solid #333;color:#fff;border-radius:8px;padding:8px 10px;font-size:12px;min-width:260px}
+.oz-mcp-confirm .btn{border:none;border-radius:8px;padding:8px 10px;font-size:12px;cursor:pointer}
+.oz-mcp-confirm .btn.ok{background:#1abc9c;color:#fff}
+.oz-mcp-confirm .btn.edit{background:#333;color:#fff}
+.oz-mcp-confirm .tag{font-size:10px;background:#1f2937;color:#9ca3af;border-radius:999px;padding:2px 6px}
+/* Prompt overlay */
+.oz-mcp-prompt-overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:2147483646;display:flex;align-items:center;justify-content:center}
+.oz-mcp-prompt{background:#111;color:#fff;min-width:300px;max-width:92vw;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.4);padding:14px}
+.oz-mcp-prompt h4{margin:0 0 8px 0;font-size:14px;font-weight:600}
+.oz-mcp-prompt input{width:100%;box-sizing:border-box;border-radius:8px;border:1px solid #333;background:#1a1a1a;color:#fff;padding:10px 12px;font-size:13px;outline:none}
+.oz-mcp-prompt .row{display:flex;gap:8px;margin-top:10px;justify-content:flex-end}
+.oz-mcp-btn{border:none;border-radius:8px;padding:8px 12px;font-size:12px;cursor:pointer}
+.oz-mcp-btn.cancel{background:#333;color:#fff}
+.oz-mcp-btn.ok{background:#1abc9c;color:#fff}
 `;
   document.head.appendChild(style);
 }
@@ -151,6 +168,120 @@ function findTextNode(root, text) {
   return null;
 }
 
+function getSelectionText() {
+  try {
+    const sel = window.getSelection();
+    if (sel && sel.toString()) return sel.toString();
+  } catch {}
+  return '';
+}
+
+function promptForAddressInline() {
+  return new Promise((resolve) => {
+    ensureStyles();
+    const overlay = document.createElement('div');
+    overlay.className = 'oz-mcp-prompt-overlay';
+    const box = document.createElement('div');
+    box.className = 'oz-mcp-prompt';
+    const title = document.createElement('h4');
+    title.textContent = 'Enter an address to check';
+    const input = document.createElement('input');
+    input.placeholder = 'e.g., 1600 Pennsylvania Ave NW, Washington, DC 20500';
+    const prefill = getSelectionText();
+    if (prefill) input.value = prefill;
+    const row = document.createElement('div');
+    row.className = 'row';
+    const cancel = document.createElement('button');
+    cancel.className = 'oz-mcp-btn cancel';
+    cancel.textContent = 'Cancel';
+    const ok = document.createElement('button');
+    ok.className = 'oz-mcp-btn ok';
+    ok.textContent = 'Check';
+    row.appendChild(cancel);
+    row.appendChild(ok);
+    box.appendChild(title);
+    box.appendChild(input);
+    box.appendChild(row);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+
+    function cleanup(val) {
+      overlay.remove();
+      resolve(val);
+    }
+
+    ok.addEventListener('click', () => {
+      const val = (input.value || '').trim();
+      cleanup(val || null);
+    });
+    cancel.addEventListener('click', () => cleanup(null));
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(null); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        const val = (input.value || '').trim();
+        cleanup(val || null);
+      } else if (e.key === 'Escape') {
+        cleanup(null);
+      }
+    });
+    setTimeout(() => input.focus(), 0);
+  });
+}
+
+function showConfirmAddressToast(initialAddress, { normalized = false } = {}) {
+  return new Promise((resolve) => {
+    ensureStyles();
+    // Remove any existing confirm
+    document.querySelectorAll('.oz-mcp-confirm').forEach((e) => e.remove());
+
+    const wrap = document.createElement('div');
+    wrap.className = 'oz-mcp-confirm';
+    const label = document.createElement('span');
+    label.textContent = 'Confirm address:';
+    const addr = document.createElement('span');
+    addr.className = 'addr';
+    addr.textContent = initialAddress || '';
+    const tag = document.createElement('span');
+    tag.className = 'tag';
+    tag.textContent = normalized ? 'normalized' : 'detected';
+    const editBtn = document.createElement('button');
+    editBtn.className = 'btn edit';
+    editBtn.textContent = 'Edit';
+    const okBtn = document.createElement('button');
+    okBtn.className = 'btn ok';
+    okBtn.textContent = 'Confirm';
+
+    wrap.appendChild(label);
+    wrap.appendChild(addr);
+    wrap.appendChild(tag);
+    wrap.appendChild(editBtn);
+    wrap.appendChild(okBtn);
+    document.body.appendChild(wrap);
+
+    function cleanup(payload) { wrap.remove(); resolve(payload); }
+
+    okBtn.addEventListener('click', () => cleanup({ action: 'confirm', address: initialAddress }));
+    editBtn.addEventListener('click', () => {
+      // swap to an input field inline
+      const input = document.createElement('input');
+      input.value = initialAddress || '';
+      wrap.replaceChild(input, addr);
+      input.focus();
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') cleanup({ action: 'edit', address: input.value.trim() });
+        if (e.key === 'Escape') cleanup({ action: 'cancel' });
+      });
+      okBtn.textContent = 'Submit';
+      okBtn.onclick = () => cleanup({ action: 'edit', address: input.value.trim() });
+      editBtn.textContent = 'Cancel';
+      editBtn.onclick = () => cleanup({ action: 'cancel' });
+    });
+
+    // Auto-dismiss after 15s if no interaction
+    setTimeout(() => cleanup({ action: 'cancel' }), 15000);
+  });
+}
+
 let scanTimeout = null;
 function scheduleScan() {
   if (scanTimeout) clearTimeout(scanTimeout);
@@ -175,6 +306,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'OZ_TOAST' && message.text) {
     showToast(message.text);
     return; // no async
+  }
+  if (message?.type === 'OZ_CONFIRM_ADDRESS') {
+    (async () => {
+      const resp = await showConfirmAddressToast(message.address || '', { normalized: !!message.normalized });
+      sendResponse(resp);
+    })();
+    return true; // async
+  }
+  if (message?.type === 'OZ_GET_SELECTION') {
+    const selection = getSelectionText();
+    sendResponse({ selection });
+    return true; // async ok
+  }
+  if (message?.type === 'OZ_PROMPT_FOR_ADDRESS') {
+    (async () => {
+      const address = await promptForAddressInline();
+      sendResponse({ address });
+    })();
+    return true; // keep the channel open for async response
   }
   if (message?.type !== 'OZ_CONTEXT_RESULT') return;
   const { query, result } = message;

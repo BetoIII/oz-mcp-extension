@@ -3,6 +3,8 @@
 
 const BASE_URL = 'https://oz-mcp.vercel.app';
 const CHECK_ENDPOINT = '/api/opportunity-zones/check';
+const LISTING_ADDRESS_ENDPOINT = '/api/listing-address';
+const GEOCODE_ENDPOINT = '/api/opportunity-zones/geocode';
 const TEMP_KEY_ENDPOINT = '/api/temporary-key';
 
 const STORAGE_KEYS = {
@@ -95,6 +97,214 @@ async function openUpgradeTab() {
   chrome.tabs.create({ url: `${BASE_URL}/pricing?upgrade=chrome` });
 }
 
+// Try to resolve an address from the current tab URL using production listing-address service
+async function resolveAddressFromUrl(listingUrl) {
+  try {
+    if (!listingUrl) return { address: null };
+    const token = await getAuthToken();
+    const res = await fetch(`${BASE_URL}${LISTING_ADDRESS_ENDPOINT}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'X-OZ-Extension': chrome.runtime.getManifest().version || 'unknown',
+      },
+      body: JSON.stringify({ url: listingUrl }),
+    });
+
+    const text = await res.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
+
+    if (res.status === 429) {
+      const code = data?.code || 'RATE_LIMITED';
+      return { error: true, status: 429, code, message: 'Rate limited' };
+    }
+    if (!res.ok) {
+      return { error: true, status: res.status, message: data?.message || 'Failed to extract address' };
+    }
+
+    const candidate = (data && (
+      data.address ||
+      data.normalizedAddress ||
+      data.result?.address ||
+      data.result?.normalizedAddress ||
+      null
+    ));
+
+    if (!candidate || typeof candidate !== 'string' || candidate.trim().length < 5) {
+      return { address: null };
+    }
+    return { address: candidate.trim(), meta: data?.meta };
+  } catch (e) {
+    return { error: true, status: 0, message: 'Network error' };
+  }
+}
+
+// Ask the content script to prompt the user inline for an address (fallback)
+function promptForAddress(tabId) {
+  return new Promise((resolve) => {
+    let settled = false;
+    try {
+      chrome.tabs.sendMessage(tabId, { type: 'OZ_PROMPT_FOR_ADDRESS' }, (resp) => {
+        if (settled) return;
+        settled = true;
+        const address = (resp && typeof resp.address === 'string') ? resp.address.trim() : '';
+        resolve(address || null);
+      });
+    } catch {
+      // ignore
+    }
+    setTimeout(() => { if (!settled) { settled = true; resolve(null); } }, 4000);
+  });
+}
+
+// Ask the content script for current selection text (if any)
+function getCurrentSelection(tabId) {
+  return new Promise((resolve) => {
+    let settled = false;
+    try {
+      chrome.tabs.sendMessage(tabId, { type: 'OZ_GET_SELECTION' }, (resp) => {
+        if (settled) return;
+        settled = true;
+        const sel = (resp && typeof resp.selection === 'string') ? resp.selection.trim() : '';
+        resolve(sel || null);
+      });
+    } catch {
+      // ignore
+    }
+    setTimeout(() => { if (!settled) { settled = true; resolve(null); } }, 1000);
+  });
+}
+
+// Ask user to confirm the address via content script UI (appears near toolbar icon)
+function requestUserAddressConfirmation(tabId, address, { normalized = false } = {}) {
+  return new Promise((resolve) => {
+    let settled = false;
+    try {
+      chrome.tabs.sendMessage(tabId, { type: 'OZ_CONFIRM_ADDRESS', address, normalized }, (resp) => {
+        if (settled) return;
+        settled = true;
+        resolve(resp || { action: 'cancel' });
+      });
+    } catch {
+      // ignore
+    }
+    setTimeout(() => { if (!settled) { settled = true; resolve({ action: 'cancel' }); } }, 15000);
+  });
+}
+
+// Normalize an edited address once before final confirmation
+async function normalizeAddressViaGeocode(address) {
+  try {
+    const token = await getAuthToken();
+    const res = await fetch(`${BASE_URL}${GEOCODE_ENDPOINT}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'X-OZ-Extension': chrome.runtime.getManifest().version || 'unknown',
+      },
+      body: JSON.stringify({ address }),
+    });
+    const text = await res.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
+    if (res.status === 429) {
+      const code = data?.code || 'RATE_LIMITED';
+      return { error: true, status: 429, code, message: 'Rate limited' };
+    }
+    if (!res.ok) {
+      return { error: true, status: res.status, message: data?.message || 'Failed to normalize address' };
+    }
+    const normalized = data?.normalizedAddress || data?.address || null;
+    return { address: normalized || address, meta: data?.meta };
+  } catch (e) {
+    return { error: true, status: 0, message: 'Network error' };
+  }
+}
+
+// Full flow: 1) URL → listing-address, 2) highlighted selection, 3) manual prompt → OZ check
+async function runAddressCheckFlow(tab, highlightedText) {
+  const tabId = tab?.id;
+  const url = tab?.url || '';
+  let chosenAddress = null;
+
+  // Step 1: try listing-address from URL
+  const urlResult = await resolveAddressFromUrl(url);
+  if (urlResult?.error && urlResult.status === 429) {
+    openUpgradeTab();
+    if (tabId) chrome.tabs.sendMessage(tabId, { type: 'OZ_TOAST', text: 'Over limit — upgrade for more' });
+    return;
+  }
+  if (!urlResult?.error && urlResult?.address) {
+    chosenAddress = urlResult.address;
+  }
+
+  // Step 2: user-highlighted selection (if URL resolution failed)
+  if (!chosenAddress) {
+    const selection = highlightedText || (tabId ? await getCurrentSelection(tabId) : null);
+    if (selection) chosenAddress = selection;
+  }
+
+  // Step 3: manual inline entry prompt
+  if (!chosenAddress && tabId) {
+    chosenAddress = await promptForAddress(tabId);
+  }
+
+  if (!chosenAddress) {
+    if (tabId) chrome.tabs.sendMessage(tabId, { type: 'OZ_TOAST', text: 'No address provided' });
+    return;
+  }
+
+  // Step A: Ask user to confirm the detected address near the icon
+  if (tabId) {
+    const first = await requestUserAddressConfirmation(tabId, chosenAddress, { normalized: false });
+    if (first?.action === 'cancel') return;
+    if (first?.action === 'edit') {
+      // Normalize once using geocoding
+      const norm = await normalizeAddressViaGeocode(first.address || chosenAddress);
+      if (norm?.error && norm.status === 429) {
+        openUpgradeTab();
+        chrome.tabs.sendMessage(tabId, { type: 'OZ_TOAST', text: 'Over limit — upgrade for more' });
+        return;
+      }
+      if (norm?.error) {
+        chrome.tabs.sendMessage(tabId, { type: 'OZ_TOAST', text: 'Could not normalize address' });
+        return;
+      }
+      const normalizedAddress = norm.address || first.address || chosenAddress;
+      const second = await requestUserAddressConfirmation(tabId, normalizedAddress, { normalized: true });
+      if (second?.action !== 'confirm') return;
+      chosenAddress = normalizedAddress;
+    } else if (first?.action === 'confirm') {
+      chosenAddress = first.address || chosenAddress;
+    } else {
+      return;
+    }
+  }
+
+  // Check cache
+  const key = normalizeAddress(chosenAddress);
+  const cached = await getCachedResult(key);
+  if (cached) {
+    if (tabId) chrome.tabs.sendMessage(tabId, { type: 'OZ_CONTEXT_RESULT', query: chosenAddress, result: { fromCache: true, ...cached } });
+    return;
+  }
+
+  // Perform OZ lookup
+  let result = await performOzLookup({ address: chosenAddress });
+  if (result?.error && result.status === 429) {
+    openUpgradeTab();
+    if (tabId) chrome.tabs.sendMessage(tabId, { type: 'OZ_CONTEXT_RESULT', query: chosenAddress, result: { error: true, status: 429, code: result.code } });
+    return;
+  }
+  if (!result?.error && !result?.addressNotFound) {
+    await setCachedResult(key, result);
+  }
+  if (tabId) chrome.tabs.sendMessage(tabId, { type: 'OZ_CONTEXT_RESULT', query: chosenAddress, result });
+}
+
 // Perform the OZ check via background to avoid CORS issues
 async function performOzLookup(params) {
   try {
@@ -185,19 +395,12 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId !== 'oz_mcp_check_selection') return;
   const selectedText = (info.selectionText || '').trim();
-  if (!selectedText) return;
 
   (async () => {
-    let response;
     try {
-      response = await performOzLookup({ address: selectedText });
+      await runAddressCheckFlow(tab, selectedText);
     } catch (e) {
-      response = { error: true, status: 0, message: 'Network error' };
-    }
-
-    // pipe result back to the active tab to render toast
-    if (tab?.id) {
-      chrome.tabs.sendMessage(tab.id, { type: 'OZ_CONTEXT_RESULT', query: selectedText, result: response });
+      if (tab?.id) chrome.tabs.sendMessage(tab.id, { type: 'OZ_TOAST', text: 'Service unavailable. Try again later.' });
     }
   })();
 });
@@ -208,9 +411,15 @@ chrome.action.onClicked.addListener((tab) => {
   const url = tab.url || '';
   const supported = /https:\/\/(?:[^/]*\.)?(zillow|loopnet|crexi)\.com\//i.test(url);
   if (!supported) {
-    // best-effort toast if content script is present; otherwise no-op
     chrome.tabs.sendMessage(tab.id, { type: 'OZ_TOAST', text: 'This site is not supported' });
     return;
   }
-  chrome.tabs.sendMessage(tab.id, { type: 'OZ_MANUAL_SCAN' });
+
+  (async () => {
+    try {
+      await runAddressCheckFlow(tab, null);
+    } catch (e) {
+      chrome.tabs.sendMessage(tab.id, { type: 'OZ_TOAST', text: 'Service unavailable. Try again later.' });
+    }
+  })();
 });

@@ -1,0 +1,70 @@
+version: '1.0'
+name: get-listing-address
+repository: local
+
+description: |
+  Extract the address of a given real estate listing from the URL or the page HTML,
+  then prompt the user to confirm the address for an Opportunity Zone search.
+
+inputs:
+  url:
+    type: string
+    description: The URL of the real estate listing page.
+
+outputs:
+  address:
+    type: string
+    description: The confirmed address of the listing.
+
+steps:
+  - id: extract_from_url
+    name: Extract address from URL
+    run:
+      engine: script
+      code: |
+        try {
+          const { pathname } = new URL(inputs.url);
+          // Look for patterns like "123 Main St, City, ST 12345"
+          const regex = /(\d+\s+[^,]+,\s*[^,]+,\s*[A-Z]{2}\s*\d{5})/;
+          const match = pathname.match(regex);
+          return { address: match ? match[1] : null };
+        } catch {
+          return { address: null };
+        }
+
+  - id: extract_from_html
+    name: Extract address from HTML
+    when: "steps.extract_from_url.address == null"
+    run:
+      engine: script
+      code: |
+        const html = await fetch(inputs.url).then(r => r.text());
+        const regex = /(\d+\s+[^,]+,\s*[^,]+,\s*[A-Z]{2}\s*\d{5})/g;
+        const matches = html.match(regex);
+        return { address: matches && matches.length > 0 ? matches[0] : null };
+
+  - id: confirm_address
+    name: Confirm extracted address with user
+    run:
+      engine: prompt
+      message: |
+        I found the following address:
+
+        {{ steps.extract_from_url.address || steps.extract_from_html.address }}
+
+        Is this correct?
+      parameters:
+        choices:
+          - Yes
+          - No
+
+  - id: finalize
+    name: Finalize output
+    run:
+      engine: script
+      code: |
+        const extracted = steps.extract_from_url.address || steps.extract_from_html.address;
+        if (steps.confirm_address === 'Yes' && extracted) {
+          return { address: extracted };
+        }
+        throw new Error('Address not confirmed by user.');

@@ -390,11 +390,19 @@ async function runAddressCheckFlow(tab, highlightedText) {
   const url = tab?.url || '';
   let chosenAddress = null;
 
+  // Show loading indicator for the entire flow
+  if (tabId) {
+    await safeSend(tabId, { type: 'OZ_TOAST', text: 'Extracting address from page...', loading: true });
+  }
+
   // Step 1: try listing-address from URL
   const urlResult = await resolveAddressFromUrl(url);
   if (urlResult?.error && urlResult.status === 429) {
     openUpgradeTab();
-    if (tabId) await safeSend(tabId, { type: 'OZ_TOAST', text: 'Over limit — upgrade for more' });
+    if (tabId) {
+      await safeSend(tabId, { type: 'OZ_HIDE_LOADING_TOAST' });
+      await safeSend(tabId, { type: 'OZ_TOAST', text: 'Over limit — upgrade for more' });
+    }
     return;
   }
   if (!urlResult?.error && urlResult?.address) {
@@ -413,12 +421,18 @@ async function runAddressCheckFlow(tab, highlightedText) {
   }
 
   if (!chosenAddress) {
-    if (tabId) await safeSend(tabId, { type: 'OZ_TOAST', text: 'No address provided' });
+    // Hide loading toast and show error message
+    if (tabId) {
+      await safeSend(tabId, { type: 'OZ_HIDE_LOADING_TOAST' });
+      await safeSend(tabId, { type: 'OZ_TOAST', text: 'No address provided' });
+    }
     return;
   }
 
   // Step A: Ask user to confirm the detected address near the icon
   if (tabId) {
+    // Hide loading toast before showing confirmation
+    await safeSend(tabId, { type: 'OZ_HIDE_LOADING_TOAST' });
     const first = await requestUserAddressConfirmation(tabId, chosenAddress, { normalized: false });
     if (first?.action === 'cancel') return;
     if (first?.action === 'edit') {

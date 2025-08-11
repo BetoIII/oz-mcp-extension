@@ -463,11 +463,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return; // no async
   }
   if (message?.type === 'OZ_TOAST' && message.text) {
-    showToast(message.text);
+    const isLoading = !!message.loading;
+    if (isLoading) {
+      // Store reference to loading toast so we can hide it later
+      scanLoadingToast = showToast(message.text, true);
+    } else {
+      showToast(message.text);
+    }
     return; // no async
   }
   if (message?.type === 'OZ_CONTEXT_LOADING') {
     contextLoadingToast = showToastNearSelection('Checking opportunity zone...', true);
+    return; // no async
+  }
+  if (message?.type === 'OZ_HIDE_LOADING_TOAST') {
+    // Hide scan loading toast if visible
+    if (scanLoadingToast && scanLoadingToast.parentElement) {
+      scanLoadingToast.remove();
+      scanLoadingToast = null;
+    }
     return; // no async
   }
   if (message?.type === 'OZ_CONFIRM_ADDRESS') {

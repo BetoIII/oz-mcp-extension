@@ -484,7 +484,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     return; // no async
   }
+  if (message?.type === 'OZ_PING') {
+    // Respond to ping to confirm content script is available
+    sendResponse({ pong: true });
+    return true; // async
+  }
   if (message?.type === 'OZ_CONFIRM_ADDRESS') {
+    // Debug: Show that we received the confirmation request
+    showToast(`Confirming: ${(message.address || '').substring(0, 30)}...`);
+    
     (async () => {
       const resp = await showConfirmAddressToast(message.address || '', { normalized: !!message.normalized });
       // Only block automatic scanning if user confirms or edits (not if they cancel)

@@ -147,6 +147,11 @@ function debounce(func, wait) {
   };
 }
 
+// Helper function for delays
+function sleep(ms) { 
+  return new Promise(resolve => setTimeout(resolve, ms)); 
+}
+
 // Utility: get and set in local storage (avoid sync for quota)
 function getLocal(keys) {
   return new Promise((resolve) => {
@@ -407,6 +412,11 @@ async function runAddressCheckFlow(tab, highlightedText) {
   }
   if (!urlResult?.error && urlResult?.address) {
     chosenAddress = urlResult.address;
+    // Debug: Show what address was detected
+    if (tabId) {
+      await safeSend(tabId, { type: 'OZ_TOAST', text: `Detected address: ${chosenAddress.substring(0, 50)}...` });
+      await sleep(1500); // Short delay to show the debug message
+    }
   }
 
   // Step 2: user-highlighted selection (if URL resolution failed)
@@ -433,6 +443,14 @@ async function runAddressCheckFlow(tab, highlightedText) {
   if (tabId) {
     // Hide loading toast before showing confirmation
     await safeSend(tabId, { type: 'OZ_HIDE_LOADING_TOAST' });
+    
+    // Debug: Check if content script is available
+    const contentScriptAvailable = await safeSend(tabId, { type: 'OZ_PING' });
+    if (!contentScriptAvailable) {
+      await safeSend(tabId, { type: 'OZ_TOAST', text: 'Content script not available - trying fallback' });
+      // Could implement a fallback here like opening the address in a new dialog
+    }
+    
     const first = await requestUserAddressConfirmation(tabId, chosenAddress, { normalized: false });
     if (first?.action === 'cancel') return;
     if (first?.action === 'edit') {

@@ -1,15 +1,17 @@
 // OZ-MCP Content Script: scans pages for candidate addresses, injects badges, handles context menu toast
 
 const MAX_CHECKS_PER_PAGE = 2; // reduced to minimize geocoding bursts
-const SCAN_DEBOUNCE_MS = 800;
-const BETWEEN_CHECK_DELAY_MS = 1500; // serialize with ~1.5s delay
+const SCAN_DEBOUNCE_MS = 1200; // increased debounce time
+const BETWEEN_CHECK_DELAY_MS = 2000; // increased serialize delay to 2s
 const RATE_LIMIT_BACKOFF_MS = 90 * 1000; // 90s pause on 429/GEOCODER_RATE_LIMITED
+const REQUEST_DEBOUNCE_MS = 500; // debounce duplicate requests
 const scannedAddresses = new Set();
 let checksUsed = 0;
 let pausedUntilTs = 0;
 let queueProcessing = false;
 let manualLookupInProgress = false;
 const addressQueue = [];
+// Simple request throttling - no need for complex pending tracking since backend handles deduplication
 
 // Conservative US address regex (very rough, tuned to avoid massive false positives)
 const ADDRESS_REGEX = /\b(\d{1,6})\s+([A-Za-z0-9'.\-]+(?:\s+[A-Za-z0-9'.\-]+)*)\s+(Ave|Avenue|St|Street|Rd|Road|Blvd|Boulevard|Ln|Lane|Dr|Drive|Ct|Court|Pl|Place|Ter|Terrace|Way|Pkwy|Parkway)\b[ ,]*([A-Za-z .'-]+)?[ ,]+([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b/;
@@ -138,6 +140,15 @@ function isRateLimitedResponse(resp) {
   return false;
 }
 
+// Simple async request function - backend handles deduplication
+async function performOzLookup(address) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: 'OZ_LOOKUP', address }, (resp) => {
+      resolve(resp);
+    });
+  });
+}
+
 async function processQueue() {
   if (queueProcessing) return;
   queueProcessing = true;
@@ -153,9 +164,7 @@ async function processQueue() {
 
       const address = addressQueue.shift();
       try {
-        const resp = await new Promise((resolve) => {
-          chrome.runtime.sendMessage({ type: 'OZ_LOOKUP', address }, (r) => resolve(r));
-        });
+        const resp = await performOzLookup(address);
 
         if (!resp || resp.error) {
           if (isRateLimitedResponse(resp)) {
@@ -240,10 +249,10 @@ function promptForAddressInline() {
     wrap.className = 'oz-mcp-confirm';
 
     const label = document.createElement('span');
-    label.textContent = 'Enter address:';
+    label.textContent = 'Could not determine address. Please enter:';
 
     const input = document.createElement('input');
-    input.placeholder = 'e.g., 1600 Pennsylvania Ave NW, Washington, DC 20500';
+    input.placeholder = 'Enter full address (e.g., 1600 Pennsylvania Ave NW, Washington, DC 20500)';
     const prefill = getSelectionText();
     if (prefill) input.value = prefill;
 
@@ -335,14 +344,38 @@ function showConfirmAddressToast(initialAddress, { normalized = false } = {}) {
 }
 
 let scanTimeout = null;
+let lastScanTime = 0;
+const MIN_SCAN_INTERVAL = 3000; // minimum 3 seconds between scans
+
 function scheduleScan() {
   if (scanTimeout) clearTimeout(scanTimeout);
-  scanTimeout = setTimeout(scanForAddresses, SCAN_DEBOUNCE_MS);
+  
+  // Enforce minimum interval between scans
+  const now = Date.now();
+  const timeSinceLastScan = now - lastScanTime;
+  const delay = Math.max(SCAN_DEBOUNCE_MS, MIN_SCAN_INTERVAL - timeSinceLastScan);
+  
+  scanTimeout = setTimeout(() => {
+    lastScanTime = Date.now();
+    scanForAddresses();
+  }, delay);
 }
 
-// Observe dynamic changes
-const observer = new MutationObserver(() => scheduleScan());
-observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+// More conservative mutation observer with throttling
+let mutationTimeout = null;
+const observer = new MutationObserver(() => {
+  // Additional throttling for mutation events
+  if (mutationTimeout) clearTimeout(mutationTimeout);
+  mutationTimeout = setTimeout(() => {
+    scheduleScan();
+  }, 1000); // Wait 1 second after mutations stop
+});
+
+observer.observe(document.documentElement, { 
+  childList: true, 
+  subtree: true, 
+  characterData: true 
+});
 
 // Initial scan
 ensureStyles();

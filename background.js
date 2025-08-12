@@ -419,7 +419,183 @@ async function normalizeAddressViaGeocode(address) {
   }
 }
 
-// Full flow: 1) Regex scan, 2) listing-address fallback (if enabled), 3) highlighted selection, 4) manual prompt → OZ check
+// Sidebar-specific flow: simplified for sidebar UI
+async function runSidebarAddressCheckFlow(tab) {
+  const tabId = tab?.id;
+  const url = tab?.url || '';
+  let chosenAddress = null;
+
+  // Send step update to sidebar
+  chrome.runtime.sendMessage({
+    type: 'OZ_SIDEBAR_STEP',
+    step: 'scan',
+    status: 'loading',
+    data: { message: 'Scanning page content...' }
+  });
+
+  // Step 1: try regex scan of page content (fast and reliable)
+  if (tabId) {
+    const foundAddresses = await getAddressesFromPage(tabId);
+    if (foundAddresses.length > 0) {
+      // Use the first address found
+      chosenAddress = foundAddresses[0];
+      
+      chrome.runtime.sendMessage({
+        type: 'OZ_SIDEBAR_STEP',
+        step: 'scan',
+        status: 'success',
+        data: { message: 'Found address' }
+      });
+      
+      chrome.runtime.sendMessage({
+        type: 'OZ_SIDEBAR_ADDRESS',
+        address: chosenAddress
+      });
+      
+      // Start confirmation step
+      chrome.runtime.sendMessage({
+        type: 'OZ_SIDEBAR_STEP',
+        step: 'confirm',
+        status: 'success',
+        data: { message: 'Address ready for lookup' }
+      });
+      
+      // Proceed to lookup
+      await lookupAddressForSidebar(chosenAddress);
+      return;
+    }
+  }
+
+  // Step 2: try listing-address from URL (only if feature flag is enabled and no address found yet)
+  if (!chosenAddress && FEATURE_FLAGS.USE_LISTING_ADDRESS_FALLBACK) {
+    chrome.runtime.sendMessage({
+      type: 'OZ_SIDEBAR_STEP',
+      step: 'scan',
+      status: 'loading',
+      data: { message: 'Trying advanced extraction...' }
+    });
+    
+    const urlResult = await resolveAddressFromUrl(url);
+    if (urlResult?.error && urlResult.status === 429) {
+      openUpgradeTab();
+      chrome.runtime.sendMessage({
+        type: 'OZ_SIDEBAR_ERROR',
+        error: 'Over limit — upgrade for more'
+      });
+      return;
+    }
+    if (!urlResult?.error && urlResult?.address) {
+      chosenAddress = urlResult.address;
+      
+      chrome.runtime.sendMessage({
+        type: 'OZ_SIDEBAR_STEP',
+        step: 'scan',
+        status: 'success',
+        data: { message: 'Found via API' }
+      });
+      
+      chrome.runtime.sendMessage({
+        type: 'OZ_SIDEBAR_ADDRESS',
+        address: chosenAddress
+      });
+      
+      // Start confirmation step
+      chrome.runtime.sendMessage({
+        type: 'OZ_SIDEBAR_STEP',
+        step: 'confirm',
+        status: 'success',
+        data: { message: 'Address ready for lookup' }
+      });
+      
+      // Proceed to lookup
+      await lookupAddressForSidebar(chosenAddress);
+      return;
+    }
+  }
+
+  // No address found
+  chrome.runtime.sendMessage({
+    type: 'OZ_SIDEBAR_STEP',
+    step: 'scan',
+    status: 'error',
+    data: { message: 'No addresses found on page' }
+  });
+}
+
+async function lookupAddressForSidebar(address) {
+  // Update lookup step
+  chrome.runtime.sendMessage({
+    type: 'OZ_SIDEBAR_STEP',
+    step: 'lookup',
+    status: 'loading',
+    data: { message: 'Checking opportunity zone status...' }
+  });
+
+  // Check cache first
+  const key = normalizeAddress(address);
+  const cached = await getCachedResult(key);
+  if (cached) {
+    chrome.runtime.sendMessage({
+      type: 'OZ_SIDEBAR_STEP',
+      step: 'lookup',
+      status: 'success',
+      data: { message: 'Retrieved from cache' }
+    });
+    
+    chrome.runtime.sendMessage({
+      type: 'OZ_SIDEBAR_RESULT',
+      result: { fromCache: true, ...cached }
+    });
+    return;
+  }
+
+  // Perform OZ lookup
+  const result = await performOzLookup({ address });
+  
+  if (result?.error && result.status === 429) {
+    openUpgradeTab();
+    chrome.runtime.sendMessage({
+      type: 'OZ_SIDEBAR_ERROR',
+      error: 'Over limit — upgrade for more'
+    });
+    return;
+  }
+  
+  if (result?.error) {
+    chrome.runtime.sendMessage({
+      type: 'OZ_SIDEBAR_STEP',
+      step: 'lookup',
+      status: 'error',
+      data: { message: 'Lookup failed' }
+    });
+    
+    chrome.runtime.sendMessage({
+      type: 'OZ_SIDEBAR_ERROR',
+      error: result.message || 'Service unavailable'
+    });
+    return;
+  }
+
+  // Success
+  chrome.runtime.sendMessage({
+    type: 'OZ_SIDEBAR_STEP',
+    step: 'lookup',
+    status: 'success',
+    data: { message: 'Lookup complete' }
+  });
+  
+  // Cache the result
+  if (!result?.addressNotFound) {
+    await setCachedResult(key, result);
+  }
+  
+  chrome.runtime.sendMessage({
+    type: 'OZ_SIDEBAR_RESULT',
+    result: result
+  });
+}
+
+// Legacy flow for context menu and other integrations
 async function runAddressCheckFlow(tab, highlightedText) {
   const tabId = tab?.id;
   const url = tab?.url || '';
@@ -495,21 +671,8 @@ async function runAddressCheckFlow(tab, highlightedText) {
     const first = await requestUserAddressConfirmation(tabId, chosenAddress, { normalized: false });
     if (first?.action === 'cancel') return;
     if (first?.action === 'edit') {
-      // Normalize once using geocoding
-      const norm = await normalizeAddressViaGeocode(first.address || chosenAddress);
-      if (norm?.error && norm.status === 429) {
-        openUpgradeTab();
-        await safeSend(tabId, { type: 'OZ_TOAST', text: 'Over limit — upgrade for more' });
-        return;
-      }
-      if (norm?.error) {
-        await safeSend(tabId, { type: 'OZ_TOAST', text: 'Could not normalize address' });
-        return;
-      }
-      const normalizedAddress = norm.address || first.address || chosenAddress;
-      const second = await requestUserAddressConfirmation(tabId, normalizedAddress, { normalized: true });
-      if (second?.action !== 'confirm') return;
-      chosenAddress = normalizedAddress;
+      // Use the edited address directly, skip normalization confirmation
+      chosenAddress = first.address || chosenAddress;
     } else if (first?.action === 'confirm') {
       chosenAddress = first.address || chosenAddress;
     } else {
@@ -576,6 +739,42 @@ async function performOzLookup(params) {
 // Primary message router
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) return;
+  
+  // Handle sidebar-initiated scan
+  if (message.type === 'OZ_START_SCAN') {
+    (async () => {
+      try {
+        const tab = await chrome.tabs.get(message.tabId);
+        await runSidebarAddressCheckFlow(tab);
+      } catch (e) {
+        console.error('Error in sidebar scan:', e);
+        // Send error to sidebar
+        chrome.runtime.sendMessage({
+          type: 'OZ_SIDEBAR_ERROR',
+          error: 'Failed to scan page'
+        });
+      }
+    })();
+    return true; // async
+  }
+  
+  // Handle sidebar-initiated address lookup
+  if (message.type === 'OZ_LOOKUP_ADDRESS') {
+    (async () => {
+      try {
+        await lookupAddressForSidebar(message.address);
+      } catch (e) {
+        console.error('Error in address lookup:', e);
+        chrome.runtime.sendMessage({
+          type: 'OZ_SIDEBAR_ERROR',
+          error: 'Failed to lookup address'
+        });
+      }
+    })();
+    return true; // async
+  }
+  
+  // Legacy OZ_LOOKUP for content script automatic scanning
   if (message.type === 'OZ_LOOKUP') {
     (async () => {
       try {
@@ -641,16 +840,16 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   })();
 });
 
-// Toolbar click → run the universal flow on any site (content script may not exist on restricted pages)
-chrome.action.onClicked.addListener((tab) => {
+// Toolbar click → open side panel and start scan
+chrome.action.onClicked.addListener(async (tab) => {
   if (!tab?.id) return;
-  (async () => {
-    try {
-      await runAddressCheckFlow(tab, null);
-    } catch (e) {
-      await safeSend(tab.id, { type: 'OZ_TOAST', text: 'Service unavailable. Try again later.' });
-    }
-  })();
+  
+  try {
+    // Open the side panel
+    await chrome.sidePanel.open({ tabId: tab.id });
+  } catch (e) {
+    console.error('Failed to open side panel:', e);
+  }
 });
 
 // Initialize circuit breaker state on startup

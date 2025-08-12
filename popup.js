@@ -17,7 +17,7 @@ document.addEventListener('DOMContentLoaded', function() {
             
             status.textContent = response.message || 'Action completed!';
         } catch (error) {
-            console.error('Error:', error);
+            
             status.textContent = 'Error occurred';
         }
     });
@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Load saved data
     chrome.storage.sync.get(['extensionData'], function(result) {
         if (result.extensionData) {
-            console.log('Loaded data:', result.extensionData);
+            
         }
     });
 });

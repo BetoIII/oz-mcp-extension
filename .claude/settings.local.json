@@ -4,7 +4,11 @@
       "Bash(mkdir:*)",
       "Bash(git add:*)",
       "Bash(gh repo create:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(node:*)",
+      "Bash(git fetch:*)",
+      "Bash(git merge:*)",
+      "WebFetch(domain:developer.chrome.com)"
     ],
     "deny": []
   }

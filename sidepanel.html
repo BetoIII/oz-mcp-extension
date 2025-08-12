@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OZ-MCP Opportunity Zone Checker</title>
+    <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+    <div class="sidebar-container">
+        <!-- Header -->
+        <div class="sidebar-header">
+            <div class="sidebar-title">
+                <span class="oz-icon">🏢</span>
+                <span>OZ Checker</span>
+            </div>
+            <button class="close-btn" id="closeSidebar" title="Close sidebar">×</button>
+        </div>
+
+        <!-- Content -->
+        <div class="sidebar-content">
+            <!-- Steps Progress -->
+            <div class="steps-container">
+                <div class="step" id="step-scan">
+                    <div class="step-icon">
+                        <div class="spinner hidden" id="spinner-scan"></div>
+                        <span class="step-number">1</span>
+                    </div>
+                    <div class="step-content">
+                        <div class="step-title">Scanning Page</div>
+                        <div class="step-description">Looking for addresses on the page</div>
+                    </div>
+                    <div class="step-status" id="status-scan"></div>
+                </div>
+
+                <div class="step" id="step-confirm">
+                    <div class="step-icon">
+                        <div class="spinner hidden" id="spinner-confirm"></div>
+                        <span class="step-number">2</span>
+                    </div>
+                    <div class="step-content">
+                        <div class="step-title">Address Confirmation</div>
+                        <div class="step-description">Confirm the detected address</div>
+                    </div>
+                    <div class="step-status" id="status-confirm"></div>
+                </div>
+
+                <div class="step" id="step-lookup">
+                    <div class="step-icon">
+                        <div class="spinner hidden" id="spinner-lookup"></div>
+                        <span class="step-number">3</span>
+                    </div>
+                    <div class="step-content">
+                        <div class="step-title">OZ Lookup</div>
+                        <div class="step-description">Checking opportunity zone status</div>
+                    </div>
+                    <div class="step-status" id="status-lookup"></div>
+                </div>
+            </div>
+
+            <!-- Address Display -->
+            <div class="address-section hidden" id="addressSection">
+                <div class="section-title">Detected Address</div>
+                <div class="address-display" id="addressDisplay"></div>
+                <button class="edit-address-btn" id="editAddressBtn">Edit Address</button>
+            </div>
+
+            <!-- Results Section -->
+            <div class="results-section hidden" id="resultsSection">
+                <div class="section-title">Opportunity Zone Status</div>
+                <div class="result-card" id="resultCard">
+                    <div class="result-icon" id="resultIcon"></div>
+                    <div class="result-content">
+                        <div class="result-status" id="resultStatus"></div>
+                        <div class="result-details" id="resultDetails"></div>
+                    </div>
+                    <button class="close-result-btn" id="closeResultBtn" title="Clear results">×</button>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="action-buttons">
+                <button class="primary-btn" id="scanPageBtn">
+                    <span class="btn-icon">🔍</span>
+                    <span>Scan This Page</span>
+                </button>
+                <button class="secondary-btn hidden" id="resetBtn">
+                    <span>Start Over</span>
+                </button>
+            </div>
+
+            <!-- Info Section -->
+            <div class="info-section">
+                <div class="info-item">
+                    <div class="info-label">What are Opportunity Zones?</div>
+                    <div class="info-description">
+                        Tax-advantaged areas designated to encourage investment in low-income communities.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="sidepanel.js"></script>
+</body>
+</html>

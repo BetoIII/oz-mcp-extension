@@ -1,6 +1,11 @@
 // OZ-MCP Background service worker (MV3)
 // Responsibilities: temp-key lifecycle, OZ lookup networking, LRU cache, context menu, message routing
 
+// Feature flags
+const FEATURE_FLAGS = {
+  USE_LISTING_ADDRESS_FALLBACK: false, // Set to true to enable listing-address API as fallback
+};
+
 const BASE_URL = 'https://oz-mcp.vercel.app';
 const CHECK_ENDPOINT = '/api/opportunity-zones/check';
 const LISTING_ADDRESS_ENDPOINT = '/api/listing-address';
@@ -145,6 +150,57 @@ function debounce(func, wait) {
     clearTimeout(timeout);
     timeout = setTimeout(later, wait);
   };
+}
+
+// Helper function for delays
+function sleep(ms) { 
+  return new Promise(resolve => setTimeout(resolve, ms)); 
+}
+
+// Address extraction using same regex as content script
+const ADDRESS_REGEX = /\b(\d{1,6})\s+([A-Za-z0-9'.\-]+(?:\s+[A-Za-z0-9'.\-]+)*)\s+(Ave|Avenue|St|Street|Rd|Road|Blvd|Boulevard|Ln|Lane|Dr|Drive|Ct|Court|Pl|Place|Ter|Terrace|Way|Pkwy|Parkway)\b[ ,]*([A-Za-z .'-]+)?[ ,]+([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b/;
+
+// Request deduplication for getAddressesFromPage (clear on startup for testing)
+const addressScanCache = new Map();
+
+
+// Ask content script to scan page for addresses using regex
+function getAddressesFromPage(tabId) {
+  // Check if we already have a scan in progress for this tab
+  const cacheKey = `tab_${tabId}`;
+  if (addressScanCache.has(cacheKey)) {
+    
+    return addressScanCache.get(cacheKey);
+  }
+
+  const promise = new Promise((resolve) => {
+    let settled = false;
+    
+    try {
+      chrome.tabs.sendMessage(tabId, { type: 'OZ_GET_PAGE_ADDRESSES' }, (resp) => {
+        if (chrome.runtime.lastError) {
+          if (!settled) { settled = true; resolve([]); }
+          return;
+        }
+        if (settled) return;
+        settled = true;
+        const addresses = (resp && Array.isArray(resp.addresses)) ? resp.addresses : [];
+        
+        resolve(addresses);
+      });
+    } catch {
+      resolve([]);
+    }
+    setTimeout(() => { if (!settled) { settled = true; resolve([]); } }, 3000);
+  });
+
+  // Cache the promise and clear it after completion
+  addressScanCache.set(cacheKey, promise);
+  promise.finally(() => {
+    setTimeout(() => addressScanCache.delete(cacheKey), 5000); // Clear cache after 5 seconds
+  });
+
+  return promise;
 }
 
 // Utility: get and set in local storage (avoid sync for quota)
@@ -384,59 +440,260 @@ async function normalizeAddressViaGeocode(address) {
   }
 }
 
-// Full flow: 1) URL → listing-address, 2) highlighted selection, 3) manual prompt → OZ check
+// Sidebar-specific flow: simplified for sidebar UI
+async function runSidebarAddressCheckFlow(tab) {
+  const tabId = tab?.id;
+  const url = tab?.url || '';
+  let chosenAddress = null;
+
+  // Send step update to sidebar
+  chrome.runtime.sendMessage({
+    type: 'OZ_SIDEBAR_STEP',
+    step: 'scan',
+    status: 'loading',
+    data: { message: 'Scanning page content...' }
+  });
+
+  // Step 1: try regex scan of page content (fast and reliable)
+  if (tabId) {
+    const foundAddresses = await getAddressesFromPage(tabId);
+    if (foundAddresses.length > 0) {
+      // Use the first address found
+      chosenAddress = foundAddresses[0];
+      
+      chrome.runtime.sendMessage({
+        type: 'OZ_SIDEBAR_STEP',
+        step: 'scan',
+        status: 'success',
+        data: { message: 'Found address' }
+      });
+      
+      chrome.runtime.sendMessage({
+        type: 'OZ_SIDEBAR_ADDRESS',
+        address: chosenAddress
+      });
+      
+      // Start confirmation step
+      chrome.runtime.sendMessage({
+        type: 'OZ_SIDEBAR_STEP',
+        step: 'confirm',
+        status: 'success',
+        data: { message: 'Address ready for lookup' }
+      });
+      
+      // Proceed to lookup
+      await lookupAddressForSidebar(chosenAddress);
+      return;
+    }
+  }
+
+  // Step 2: try listing-address from URL (only if feature flag is enabled and no address found yet)
+  if (!chosenAddress && FEATURE_FLAGS.USE_LISTING_ADDRESS_FALLBACK) {
+    chrome.runtime.sendMessage({
+      type: 'OZ_SIDEBAR_STEP',
+      step: 'scan',
+      status: 'loading',
+      data: { message: 'Trying advanced extraction...' }
+    });
+    
+    const urlResult = await resolveAddressFromUrl(url);
+    if (urlResult?.error && urlResult.status === 429) {
+      openUpgradeTab();
+      chrome.runtime.sendMessage({
+        type: 'OZ_SIDEBAR_ERROR',
+        error: 'Over limit — upgrade for more'
+      });
+      return;
+    }
+    if (!urlResult?.error && urlResult?.address) {
+      chosenAddress = urlResult.address;
+      
+      chrome.runtime.sendMessage({
+        type: 'OZ_SIDEBAR_STEP',
+        step: 'scan',
+        status: 'success',
+        data: { message: 'Found via API' }
+      });
+      
+      chrome.runtime.sendMessage({
+        type: 'OZ_SIDEBAR_ADDRESS',
+        address: chosenAddress
+      });
+      
+      // Start confirmation step
+      chrome.runtime.sendMessage({
+        type: 'OZ_SIDEBAR_STEP',
+        step: 'confirm',
+        status: 'success',
+        data: { message: 'Address ready for lookup' }
+      });
+      
+      // Proceed to lookup
+      await lookupAddressForSidebar(chosenAddress);
+      return;
+    }
+  }
+
+  // No address found
+  chrome.runtime.sendMessage({
+    type: 'OZ_SIDEBAR_STEP',
+    step: 'scan',
+    status: 'error',
+    data: { message: 'No addresses found on page' }
+  });
+}
+
+async function lookupAddressForSidebar(address) {
+  // Update lookup step
+  chrome.runtime.sendMessage({
+    type: 'OZ_SIDEBAR_STEP',
+    step: 'lookup',
+    status: 'loading',
+    data: { message: 'Checking opportunity zone status...' }
+  });
+
+  // Check cache first
+  const key = normalizeAddress(address);
+  const cached = await getCachedResult(key);
+  if (cached) {
+    chrome.runtime.sendMessage({
+      type: 'OZ_SIDEBAR_STEP',
+      step: 'lookup',
+      status: 'success',
+      data: { message: 'Retrieved from cache' }
+    });
+    
+    chrome.runtime.sendMessage({
+      type: 'OZ_SIDEBAR_RESULT',
+      result: { fromCache: true, ...cached }
+    });
+    return;
+  }
+
+  // Perform OZ lookup
+  const result = await performOzLookup({ address });
+  
+  if (result?.error && result.status === 429) {
+    openUpgradeTab();
+    chrome.runtime.sendMessage({
+      type: 'OZ_SIDEBAR_ERROR',
+      error: 'Over limit — upgrade for more'
+    });
+    return;
+  }
+  
+  if (result?.error) {
+    chrome.runtime.sendMessage({
+      type: 'OZ_SIDEBAR_STEP',
+      step: 'lookup',
+      status: 'error',
+      data: { message: 'Lookup failed' }
+    });
+    
+    chrome.runtime.sendMessage({
+      type: 'OZ_SIDEBAR_ERROR',
+      error: result.message || 'Service unavailable'
+    });
+    return;
+  }
+
+  // Success
+  chrome.runtime.sendMessage({
+    type: 'OZ_SIDEBAR_STEP',
+    step: 'lookup',
+    status: 'success',
+    data: { message: 'Lookup complete' }
+  });
+  
+  // Cache the result
+  if (!result?.addressNotFound) {
+    await setCachedResult(key, result);
+  }
+  
+  chrome.runtime.sendMessage({
+    type: 'OZ_SIDEBAR_RESULT',
+    result: result
+  });
+}
+
+// Legacy flow for context menu and other integrations
 async function runAddressCheckFlow(tab, highlightedText) {
   const tabId = tab?.id;
   const url = tab?.url || '';
   let chosenAddress = null;
 
-  // Step 1: try listing-address from URL
-  const urlResult = await resolveAddressFromUrl(url);
-  if (urlResult?.error && urlResult.status === 429) {
-    openUpgradeTab();
-    if (tabId) await safeSend(tabId, { type: 'OZ_TOAST', text: 'Over limit — upgrade for more' });
-    return;
-  }
-  if (!urlResult?.error && urlResult?.address) {
-    chosenAddress = urlResult.address;
+  // Show loading indicator for the entire flow
+  if (tabId) {
+    await safeSend(tabId, { type: 'OZ_TOAST', text: 'Scanning page for addresses...', loading: true });
   }
 
-  // Step 2: user-highlighted selection (if URL resolution failed)
+  // Step 1: try regex scan of page content (fast and reliable)
+  if (tabId) {
+    const foundAddresses = await getAddressesFromPage(tabId);
+    if (foundAddresses.length > 0) {
+      // Use the first address found
+      chosenAddress = foundAddresses[0];
+      // Debug: Show what address was detected
+      if (tabId) {
+        await safeSend(tabId, { type: 'OZ_TOAST', text: `Found address: ${chosenAddress.substring(0, 50)}...` });
+        await sleep(1500); // Short delay to show the debug message
+      }
+    }
+  }
+
+  // Step 2: try listing-address from URL (only if feature flag is enabled and no address found yet)
+  if (!chosenAddress && FEATURE_FLAGS.USE_LISTING_ADDRESS_FALLBACK) {
+    if (tabId) {
+      await safeSend(tabId, { type: 'OZ_TOAST', text: 'Trying advanced address extraction...', loading: true });
+    }
+    const urlResult = await resolveAddressFromUrl(url);
+    if (urlResult?.error && urlResult.status === 429) {
+      openUpgradeTab();
+      if (tabId) {
+        await safeSend(tabId, { type: 'OZ_HIDE_LOADING_TOAST' });
+        await safeSend(tabId, { type: 'OZ_TOAST', text: 'Over limit — upgrade for more' });
+      }
+      return;
+    }
+    if (!urlResult?.error && urlResult?.address) {
+      chosenAddress = urlResult.address;
+      // Debug: Show what address was detected
+      if (tabId) {
+        await safeSend(tabId, { type: 'OZ_TOAST', text: `API found address: ${chosenAddress.substring(0, 50)}...` });
+        await sleep(1500); // Short delay to show the debug message
+      }
+    }
+  }
+
+  // Step 3: user-highlighted selection (if no address found yet)
   if (!chosenAddress) {
     const selection = highlightedText || (tabId ? await getCurrentSelection(tabId) : null);
     if (selection) chosenAddress = selection;
   }
 
-  // Step 3: manual inline entry prompt
+  // Step 4: manual inline entry prompt
   if (!chosenAddress && tabId) {
     chosenAddress = await promptForAddress(tabId);
   }
 
   if (!chosenAddress) {
-    if (tabId) await safeSend(tabId, { type: 'OZ_TOAST', text: 'No address provided' });
+    // Hide loading toast and show error message
+    if (tabId) {
+      await safeSend(tabId, { type: 'OZ_HIDE_LOADING_TOAST' });
+      await safeSend(tabId, { type: 'OZ_TOAST', text: 'No address provided' });
+    }
     return;
   }
 
   // Step A: Ask user to confirm the detected address near the icon
   if (tabId) {
+    // Hide loading toast before showing confirmation
+    await safeSend(tabId, { type: 'OZ_HIDE_LOADING_TOAST' });
     const first = await requestUserAddressConfirmation(tabId, chosenAddress, { normalized: false });
     if (first?.action === 'cancel') return;
     if (first?.action === 'edit') {
-      // Normalize once using geocoding
-      const norm = await normalizeAddressViaGeocode(first.address || chosenAddress);
-      if (norm?.error && norm.status === 429) {
-        openUpgradeTab();
-        await safeSend(tabId, { type: 'OZ_TOAST', text: 'Over limit — upgrade for more' });
-        return;
-      }
-      if (norm?.error) {
-        await safeSend(tabId, { type: 'OZ_TOAST', text: 'Could not normalize address' });
-        return;
-      }
-      const normalizedAddress = norm.address || first.address || chosenAddress;
-      const second = await requestUserAddressConfirmation(tabId, normalizedAddress, { normalized: true });
-      if (second?.action !== 'confirm') return;
-      chosenAddress = normalizedAddress;
+      // Use the edited address directly, skip normalization confirmation
+      chosenAddress = first.address || chosenAddress;
     } else if (first?.action === 'confirm') {
       chosenAddress = first.address || chosenAddress;
     } else {
@@ -470,7 +727,10 @@ async function performOzLookup(params) {
   try {
     const token = await getAuthToken();
     const search = new URLSearchParams();
-    if (params.address) search.set('address', params.address);
+    if (params.address) {
+      
+      search.set('address', params.address);
+    }
     if (typeof params.lat === 'number' && typeof params.lon === 'number') {
       search.set('lat', String(params.lat));
       search.set('lon', String(params.lon));
@@ -503,6 +763,48 @@ async function performOzLookup(params) {
 // Primary message router
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) return;
+  
+  // Handle sidebar-initiated scan
+  if (message.type === 'OZ_START_SCAN') {
+    
+    (async () => {
+      try {
+        const tab = await chrome.tabs.get(message.tabId);
+        
+        await runSidebarAddressCheckFlow(tab);
+      } catch (e) {
+        
+        // Send error to sidebar
+        chrome.runtime.sendMessage({
+          type: 'OZ_SIDEBAR_ERROR',
+          error: 'Failed to scan page'
+        });
+      }
+    })();
+    // Immediately acknowledge to avoid keeping the message channel open
+    try { sendResponse({ ok: true }); } catch (e) { /* noop */ }
+    return; // no async response expected
+  }
+  
+  // Handle sidebar-initiated address lookup
+  if (message.type === 'OZ_LOOKUP_ADDRESS') {
+    (async () => {
+      try {
+        await lookupAddressForSidebar(message.address);
+      } catch (e) {
+        
+        chrome.runtime.sendMessage({
+          type: 'OZ_SIDEBAR_ERROR',
+          error: 'Failed to lookup address'
+        });
+      }
+    })();
+    // Immediately acknowledge to avoid keeping the message channel open
+    try { sendResponse({ ok: true }); } catch (e) { /* noop */ }
+    return; // no async response expected
+  }
+  
+  // Legacy OZ_LOOKUP for content script automatic scanning
   if (message.type === 'OZ_LOOKUP') {
     (async () => {
       try {
@@ -554,6 +856,11 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId !== 'oz_mcp_check_selection') return;
   const selectedText = (info.selectionText || '').trim();
 
+  // Show loading indicator immediately
+  if (tab?.id) {
+    chrome.tabs.sendMessage(tab.id, { type: 'OZ_CONTEXT_LOADING', query: selectedText });
+  }
+
   (async () => {
     try {
       await runAddressCheckFlow(tab, selectedText);
@@ -563,16 +870,16 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   })();
 });
 
-// Toolbar click → run the universal flow on any site (content script may not exist on restricted pages)
-chrome.action.onClicked.addListener((tab) => {
+// Toolbar click → open side panel and start scan
+chrome.action.onClicked.addListener(async (tab) => {
   if (!tab?.id) return;
-  (async () => {
-    try {
-      await runAddressCheckFlow(tab, null);
-    } catch (e) {
-      await safeSend(tab.id, { type: 'OZ_TOAST', text: 'Service unavailable. Try again later.' });
-    }
-  })();
+  
+  try {
+    // Open the side panel
+    await chrome.sidePanel.open({ tabId: tab.id });
+  } catch (e) {
+    
+  }
 });
 
 // Initialize circuit breaker state on startup

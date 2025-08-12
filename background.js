@@ -160,10 +160,22 @@ function sleep(ms) {
 // Address extraction using same regex as content script
 const ADDRESS_REGEX = /\b(\d{1,6})\s+([A-Za-z0-9'.\-]+(?:\s+[A-Za-z0-9'.\-]+)*)\s+(Ave|Avenue|St|Street|Rd|Road|Blvd|Boulevard|Ln|Lane|Dr|Drive|Ct|Court|Pl|Place|Ter|Terrace|Way|Pkwy|Parkway)\b[ ,]*([A-Za-z .'-]+)?[ ,]+([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b/;
 
+// Request deduplication for getAddressesFromPage (clear on startup for testing)
+const addressScanCache = new Map();
+
+
 // Ask content script to scan page for addresses using regex
 function getAddressesFromPage(tabId) {
-  return new Promise((resolve) => {
+  // Check if we already have a scan in progress for this tab
+  const cacheKey = `tab_${tabId}`;
+  if (addressScanCache.has(cacheKey)) {
+    
+    return addressScanCache.get(cacheKey);
+  }
+
+  const promise = new Promise((resolve) => {
     let settled = false;
+    
     try {
       chrome.tabs.sendMessage(tabId, { type: 'OZ_GET_PAGE_ADDRESSES' }, (resp) => {
         if (chrome.runtime.lastError) {
@@ -173,6 +185,7 @@ function getAddressesFromPage(tabId) {
         if (settled) return;
         settled = true;
         const addresses = (resp && Array.isArray(resp.addresses)) ? resp.addresses : [];
+        
         resolve(addresses);
       });
     } catch {
@@ -180,6 +193,14 @@ function getAddressesFromPage(tabId) {
     }
     setTimeout(() => { if (!settled) { settled = true; resolve([]); } }, 3000);
   });
+
+  // Cache the promise and clear it after completion
+  addressScanCache.set(cacheKey, promise);
+  promise.finally(() => {
+    setTimeout(() => addressScanCache.delete(cacheKey), 5000); // Clear cache after 5 seconds
+  });
+
+  return promise;
 }
 
 // Utility: get and set in local storage (avoid sync for quota)
@@ -706,7 +727,10 @@ async function performOzLookup(params) {
   try {
     const token = await getAuthToken();
     const search = new URLSearchParams();
-    if (params.address) search.set('address', params.address);
+    if (params.address) {
+      
+      search.set('address', params.address);
+    }
     if (typeof params.lat === 'number' && typeof params.lon === 'number') {
       search.set('lat', String(params.lat));
       search.set('lon', String(params.lon));
@@ -742,12 +766,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   
   // Handle sidebar-initiated scan
   if (message.type === 'OZ_START_SCAN') {
+    
     (async () => {
       try {
         const tab = await chrome.tabs.get(message.tabId);
+        
         await runSidebarAddressCheckFlow(tab);
       } catch (e) {
-        console.error('Error in sidebar scan:', e);
+        
         // Send error to sidebar
         chrome.runtime.sendMessage({
           type: 'OZ_SIDEBAR_ERROR',
@@ -755,7 +781,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         });
       }
     })();
-    return true; // async
+    // Immediately acknowledge to avoid keeping the message channel open
+    try { sendResponse({ ok: true }); } catch (e) { /* noop */ }
+    return; // no async response expected
   }
   
   // Handle sidebar-initiated address lookup
@@ -764,14 +792,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       try {
         await lookupAddressForSidebar(message.address);
       } catch (e) {
-        console.error('Error in address lookup:', e);
+        
         chrome.runtime.sendMessage({
           type: 'OZ_SIDEBAR_ERROR',
           error: 'Failed to lookup address'
         });
       }
     })();
-    return true; // async
+    // Immediately acknowledge to avoid keeping the message channel open
+    try { sendResponse({ ok: true }); } catch (e) { /* noop */ }
+    return; // no async response expected
   }
   
   // Legacy OZ_LOOKUP for content script automatic scanning
@@ -848,7 +878,7 @@ chrome.action.onClicked.addListener(async (tab) => {
     // Open the side panel
     await chrome.sidePanel.open({ tabId: tab.id });
   } catch (e) {
-    console.error('Failed to open side panel:', e);
+    
   }
 });
 

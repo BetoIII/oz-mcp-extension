@@ -1,5 +1,32 @@
 // OZ-MCP Content Script: scans pages for candidate addresses, injects badges, handles context menu toast
 
+// Internal logging system - completely silent in production
+const ozLogs = [];
+const MAX_LOGS = 100;
+const PRODUCTION_MODE = true; // Set to false for debugging
+
+function ozLog(message, data = null) {
+  const timestamp = new Date().toISOString();
+  const logEntry = { timestamp, message, data };
+  ozLogs.push(logEntry);
+  if (ozLogs.length > MAX_LOGS) {
+    ozLogs.shift(); // Remove oldest log
+  }
+  // Completely silent in production mode
+}
+
+function ozGetLogs() {
+  return ozLogs.slice(); // Return copy
+}
+
+function ozClearLogs() {
+  ozLogs.length = 0;
+  ozLog('Logs cleared');
+}
+
+// Expose log functions globally for debugging
+window.ozDebug = { getLogs: ozGetLogs, clearLogs: ozClearLogs, log: ozLog };
+
 const MAX_CHECKS_PER_PAGE = 2; // reduced to minimize geocoding bursts
 const SCAN_DEBOUNCE_MS = 1200; // increased debounce time
 const BETWEEN_CHECK_DELAY_MS = 2000; // increased serialize delay to 2s
@@ -15,8 +42,280 @@ let manualLookupInProgress = false;
 const addressQueue = [];
 // Simple request throttling - no need for complex pending tracking since backend handles deduplication
 
-// Conservative US address regex (very rough, tuned to avoid massive false positives)
+// Conservative US address regex (legacy - now using comprehensive extraction)
 const ADDRESS_REGEX = /\b(\d{1,6})\s+([A-Za-z0-9'.\-]+(?:\s+[A-Za-z0-9'.\-]+)*)\s+(Ave|Avenue|St|Street|Rd|Road|Blvd|Boulevard|Ln|Lane|Dr|Drive|Ct|Court|Pl|Place|Ter|Terrace|Way|Pkwy|Parkway)\b[ ,]*([A-Za-z .'-]+)?[ ,]+([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b/;
+
+// Comprehensive address extraction logic (based on server-side implementation)
+// Enhanced regex for better address matching
+const ENHANCED_ADDRESS_REGEX = /\b(\d{1,6})\s+([A-Za-z0-9\s'.\-&]+?)\s+(Avenue|Ave|Street|St|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Circle|Cir|Place|Pl|Way|Terrace|Ter|Parkway|Pkwy|Highway|Hwy|Trail|Trl|Square|Sq|Loop|Plaza|Plz)\s*(?:,\s*)?(?:(?:Apt|Apartment|Unit|Ste|Suite|#)\s*[A-Za-z0-9\-]+)?\s*(?:,\s*)?([A-Za-z\s.'-]+?)\s*(?:,\s*)([A-Z]{2})\s+(\d{5}(?:-\d{4})?)\b/gi;
+
+// Address validation
+function isValidAddress(address) {
+  if (!address || typeof address !== 'string') return false;
+  const parts = address.split(',').map(p => p.trim());
+  if (parts.length < 3) return false;
+  
+  // Check for street number and name
+  const streetMatch = parts[0].match(/^\d+\s+.+/);
+  if (!streetMatch) return false;
+  
+  // Check for state and zip
+  const lastPart = parts[parts.length - 1];
+  const stateZipMatch = lastPart.match(/\b[A-Z]{2}\s+\d{5}(?:-\d{4})?\b/);
+  return !!stateZipMatch;
+}
+
+// 1. Extract address from URL
+function tryExtractFromUrl(url) {
+  ozLog('Trying URL extraction', { url });
+  
+  try {
+    const urlObj = new URL(url);
+    const pathParts = urlObj.pathname.split('/').concat(urlObj.search.split('&')).concat(urlObj.hash.split('#'));
+    
+    for (const part of pathParts) {
+      const decoded = decodeURIComponent(part.replace(/[-_+]/g, ' '));
+      ozLog('Processing URL part', { original: part, decoded });
+      const matches = decoded.match(ENHANCED_ADDRESS_REGEX);
+      if (matches && matches.length > 0) {
+        ozLog('URL regex matches found', { matches });
+        for (const match of matches) {
+          if (isValidAddress(match)) {
+            ozLog('Found valid address in URL', { address: match });
+            return match.trim();
+          }
+        }
+      }
+    }
+  } catch (e) {
+    ozLog('ERROR: URL parsing failed', { error: e.message });
+  }
+  
+  ozLog('No address found in URL');
+  return null;
+}
+
+// 2. Extract address from JSON-LD structured data
+function extractFromJsonLd() {
+  ozLog('Trying JSON-LD extraction');
+  
+  const jsonLdScripts = document.querySelectorAll('script[type="application/ld+json"]');
+  ozLog('Found JSON-LD scripts', { count: jsonLdScripts.length });
+  
+  for (const script of jsonLdScripts) {
+    try {
+      const data = JSON.parse(script.textContent);
+      const address = findPostalAddressInObject(data);
+      if (address && isValidAddress(address)) {
+        ozLog('Found address in JSON-LD', { address });
+        return address;
+      }
+    } catch (e) {
+      ozLog('JSON-LD parsing failed', { error: e.message });
+    }
+  }
+  
+  ozLog('No address found in JSON-LD');
+  return null;
+}
+
+// Recursively search for postal address in nested objects
+function findPostalAddressInObject(obj) {
+  if (!obj || typeof obj !== 'object') return null;
+  
+  // Check if this object has postal address properties
+  if (obj.streetAddress && obj.addressLocality && obj.addressRegion && obj.postalCode) {
+    const address = `${obj.streetAddress}, ${obj.addressLocality}, ${obj.addressRegion} ${obj.postalCode}`;
+    return address;
+  }
+  
+  // Check for address property
+  if (obj.address) {
+    const found = findPostalAddressInObject(obj.address);
+    if (found) return found;
+  }
+  
+  // Recursively search all properties
+  for (const key in obj) {
+    if (obj.hasOwnProperty(key)) {
+      const value = obj[key];
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          const found = findPostalAddressInObject(item);
+          if (found) return found;
+        }
+      } else if (typeof value === 'object') {
+        const found = findPostalAddressInObject(value);
+        if (found) return found;
+      }
+    }
+  }
+  
+  return null;
+}
+
+// 3. Extract address from meta tags
+function extractFromMetaTags() {
+  
+  
+  const addressProperties = [
+    'og:street-address', 'og:locality', 'og:region', 'og:postal-code',
+    'property:street_address', 'property:city', 'property:state_or_province', 'property:postal_code',
+    'address', 'street-address', 'locality', 'region', 'postal-code'
+  ];
+  
+  const addressParts = {};
+  
+  for (const prop of addressProperties) {
+    const meta = document.querySelector(`meta[property="${prop}"], meta[name="${prop}"]`);
+    if (meta) {
+      const content = meta.getAttribute('content');
+      if (content) {
+        if (prop.includes('street') || prop === 'address') {
+          addressParts.street = content;
+        } else if (prop.includes('locality') || prop.includes('city')) {
+          addressParts.city = content;
+        } else if (prop.includes('region') || prop.includes('state')) {
+          addressParts.state = content;
+        } else if (prop.includes('postal')) {
+          addressParts.zip = content;
+        }
+      }
+    }
+  }
+  
+  // Check if we have all required parts
+  if (addressParts.street && addressParts.city && addressParts.state && addressParts.zip) {
+    const address = `${addressParts.street}, ${addressParts.city}, ${addressParts.state} ${addressParts.zip}`;
+    if (isValidAddress(address)) {
+      
+      return address;
+    }
+  }
+  
+  return null;
+}
+
+// 4. Extract address using enhanced regex on page text
+function extractUsingRegex() {
+  
+  
+  // Get page text, prioritizing main content areas
+  const contentSelectors = [
+    'main', '[role="main"]', '.content', '#content', 
+    '.listing-detail', '.property-details', '.address',
+    'h1', 'h2', '.title', '.property-title'
+  ];
+  
+  const addresses = [];
+  
+  // First, try to find addresses in structured content areas
+  for (const selector of contentSelectors) {
+    const elements = document.querySelectorAll(selector);
+    for (const element of elements) {
+      if (isVisible(element)) {
+        const text = element.textContent || '';
+        const matches = text.match(ENHANCED_ADDRESS_REGEX);
+        if (matches) {
+          for (const match of matches) {
+            if (isValidAddress(match)) {
+              addresses.push(match.trim());
+            }
+          }
+        }
+      }
+    }
+  }
+  
+  // If no addresses found in structured content, fall back to full page scan
+  if (addresses.length === 0) {
+    const walker = document.createTreeWalker(
+      document.body, 
+      NodeFilter.SHOW_TEXT,
+      {
+        acceptNode(node) {
+          const text = (node.nodeValue || '').trim();
+          if (!text || text.length > 300) return NodeFilter.FILTER_REJECT;
+          
+          const parent = node.parentElement;
+          if (!parent || !isVisible(parent)) return NodeFilter.FILTER_SKIP;
+          
+          // Skip navigation, ads, and irrelevant areas
+          const parentHtml = parent.outerHTML || '';
+          if (parentHtml.includes('nav') || 
+              parentHtml.includes('footer') || 
+              parentHtml.includes('advertisement') ||
+              parent.closest('[class*="nav"]') ||
+              parent.closest('[class*="footer"]') ||
+              parent.closest('[class*="ad"]') ||
+              parent.closest('[class*="similar"]') ||
+              parent.closest('[class*="nearby"]')) {
+            return NodeFilter.FILTER_SKIP;
+          }
+          
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      }
+    );
+    
+    while (walker.nextNode()) {
+      const text = walker.currentNode.nodeValue;
+      const matches = text.match(ENHANCED_ADDRESS_REGEX);
+      if (matches) {
+        for (const match of matches) {
+          if (isValidAddress(match)) {
+            addresses.push(match.trim());
+          }
+        }
+      }
+    }
+  }
+  
+  // Dedupe and return top candidate
+  const uniqueAddresses = [...new Set(addresses)];
+  if (uniqueAddresses.length > 0) {
+    
+    return uniqueAddresses[0]; // Return the first (most likely) address
+  }
+  
+  return null;
+}
+
+// 5. Main comprehensive address extraction function
+function extractListingAddress() {
+  ozLog('Starting comprehensive address extraction');
+  
+  // Strategy 1: Try URL extraction first (fastest)
+  const urlAddress = tryExtractFromUrl(window.location.href);
+  if (urlAddress) {
+    ozLog('Comprehensive extraction SUCCESS via URL', { address: urlAddress });
+    return urlAddress;
+  }
+  
+  // Strategy 2: Try JSON-LD structured data (most reliable)
+  const jsonLdAddress = extractFromJsonLd();
+  if (jsonLdAddress) {
+    ozLog('Comprehensive extraction SUCCESS via JSON-LD', { address: jsonLdAddress });
+    return jsonLdAddress;
+  }
+  
+  // Strategy 3: Try meta tags (reliable for some sites)
+  const metaAddress = extractFromMetaTags();
+  if (metaAddress) {
+    ozLog('Comprehensive extraction SUCCESS via meta tags', { address: metaAddress });
+    return metaAddress;
+  }
+  
+  // Strategy 4: Fall back to regex text extraction
+  const regexAddress = extractUsingRegex();
+  if (regexAddress) {
+    ozLog('Comprehensive extraction SUCCESS via regex', { address: regexAddress });
+    return regexAddress;
+  }
+  
+  ozLog('Comprehensive extraction FAILED - no address found');
+  return null;
+}
 
 // Styles
 function ensureStyles() {
@@ -194,6 +493,9 @@ async function processQueue() {
 
       const address = addressQueue.shift();
       
+      // Debug: Log address being processed
+      
+      
       // Show loading badge immediately
       const node = findTextNode(document.body, address);
       let loadingBadge = null;
@@ -283,6 +585,12 @@ function scanForAddresses() {
   }
 
   const toEnqueue = dedupeAndLimit(candidates).filter((addr) => !scannedAddresses.has(addr));
+  
+  // Debug: Log addresses found during scan
+  if (candidates.length > 0) {
+    
+    
+  }
   
   // If no addresses found during manual scan, hide loading toast
   if (toEnqueue.length === 0 && scanLoadingToast && scanLoadingToast.parentElement) {
@@ -432,13 +740,22 @@ function scheduleScan() {
   }, delay);
 }
 
-// More conservative mutation observer with throttling
+// Conservative mutation observer - only clear stale addresses, don't auto-scan
 let mutationTimeout = null;
+let lastPageContent = document.body?.textContent || '';
 const observer = new MutationObserver(() => {
   // Additional throttling for mutation events
   if (mutationTimeout) clearTimeout(mutationTimeout);
   mutationTimeout = setTimeout(() => {
-    scheduleScan();
+    // Clear stale addresses on major DOM changes but don't auto-scan
+    const currentPageContent = document.body?.textContent || '';
+    if (currentPageContent !== lastPageContent) {
+      
+      scannedAddresses.clear();
+      addressQueue.length = 0;
+      lastPageContent = currentPageContent;
+    }
+    // Don't call scheduleScan() - only scan on explicit user request
   }, 1000); // Wait 1 second after mutations stop
 });
 
@@ -448,16 +765,27 @@ observer.observe(document.documentElement, {
   characterData: true 
 });
 
-// Initial scan
+// Initialize styles but don't start automatic scanning
+// Scans should only happen when explicitly requested via manual scan or context menu
 ensureStyles();
-scheduleScan();
+ozLog('Content script loaded - automatic scanning disabled');
+ozLog('Page info', { 
+  url: window.location.href, 
+  title: document.title,
+  domain: window.location.hostname 
+});
 
 let contextLoadingToast = null;
 
 // Context menu result handler → show toast near selection
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  ozLog('Content script received message', { type: message?.type });
+  
   if (message?.type === 'OZ_MANUAL_SCAN') {
     checksUsed = 0; // allow another batch
+    
+    scannedAddresses.clear(); // Clear stale addresses
+    addressQueue.length = 0; // Clear pending queue
     scanLoadingToast = showToast('Scanning for addresses...', true);
     scheduleScan();
     return; // no async
@@ -489,36 +817,58 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ pong: true });
     return true; // async
   }
+  if (message?.type === 'OZ_GET_LOGS') {
+    // Return internal logs for debugging
+    sendResponse({ logs: ozGetLogs() });
+    return true; // async
+  }
+  if (message?.type === 'OZ_CLEAR_LOGS') {
+    // Clear internal logs
+    ozClearLogs();
+    sendResponse({ cleared: true });
+    return true; // async
+  }
   if (message?.type === 'OZ_GET_PAGE_ADDRESSES') {
-    // Scan page for addresses using same logic as automatic scanning
-    const addresses = [];
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
-      acceptNode(node) {
-        const text = (node.nodeValue || '').trim();
-        if (!text || text.length > 200) return NodeFilter.FILTER_REJECT;
-        if (!ADDRESS_REGEX.test(text)) return NodeFilter.FILTER_SKIP;
-        const parent = node.parentElement;
-        if (!parent || !isVisible(parent)) return NodeFilter.FILTER_SKIP;
-        return NodeFilter.FILTER_ACCEPT;
-      },
-    });
+    ozLog('Received OZ_GET_PAGE_ADDRESSES request - comparing methods');
+    
+    try {
+      // Method 1: Comprehensive extraction
+      const comprehensiveAddress = extractListingAddress();
+      ozLog('Comprehensive method result', { address: comprehensiveAddress });
+      
+      // Method 2: Original simple regex (for comparison)
+      const originalAddresses = [];
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+          const text = (node.nodeValue || '').trim();
+          if (!text || text.length > 200) return NodeFilter.FILTER_REJECT;
+          if (!ADDRESS_REGEX.test(text)) return NodeFilter.FILTER_SKIP;
+          const parent = node.parentElement;
+          if (!parent || !isVisible(parent)) return NodeFilter.FILTER_SKIP;
+          return NodeFilter.FILTER_ACCEPT;
+        },
+      });
 
-    while (walker.nextNode()) {
-      const text = walker.currentNode.nodeValue;
-      const m = text.match(ADDRESS_REGEX);
-      if (m) addresses.push(m[0]);
+      while (walker.nextNode()) {
+        const text = walker.currentNode.nodeValue;
+        const m = text.match(ADDRESS_REGEX);
+        if (m) originalAddresses.push(m[0]);
+      }
+
+      const uniqueOriginal = [...new Set(originalAddresses)];
+      ozLog('Original regex method result', { addresses: uniqueOriginal });
+      
+      // Prefer original regex method since comprehensive seems to be wrong
+      const finalAddress = (uniqueOriginal.length > 0 ? uniqueOriginal[0] : null) || comprehensiveAddress;
+      const addresses = finalAddress ? [finalAddress] : [];
+      
+      ozLog('Final selected address for response', { addresses });
+      sendResponse({ addresses });
+    } catch (error) {
+      ozLog('ERROR: Address extraction failed', { error: error.message });
+      sendResponse({ addresses: [] });
     }
-
-    // Dedupe addresses
-    const seen = new Set();
-    const uniqueAddresses = addresses.filter(addr => {
-      const key = addr.toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-
-    sendResponse({ addresses: uniqueAddresses });
+    
     return true; // async
   }
   if (message?.type === 'OZ_CONFIRM_ADDRESS') {

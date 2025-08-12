@@ -60,6 +60,7 @@ class OZSidebar {
     async startScan() {
         if (this.isProcessing) return;
         
+        
         this.isProcessing = true;
         this.reset();
         this.setStep('scan', 'active');
@@ -75,6 +76,7 @@ class OZSidebar {
                 return;
             }
             
+            
             // Send message to background script to start the flow
             chrome.runtime.sendMessage({ 
                 type: 'OZ_START_SCAN', 
@@ -82,7 +84,7 @@ class OZSidebar {
             });
             
         } catch (error) {
-            console.error('Error starting scan:', error);
+            
             this.showError('Failed to start scan');
         }
     }
@@ -303,7 +305,7 @@ class OZSidebar {
     closeSidePanel() {
         // Note: Chrome side panels can't be closed programmatically by the extension
         // This button is for UI consistency but won't actually close the panel
-        console.log('Close button clicked - users must close the panel manually');
+        
     }
 }
 

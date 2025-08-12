@@ -106,12 +106,47 @@ async function deduplicatedFetch(endpoint, options, params = {}) {
 
   const requestPromise = (async () => {
     try {
-      const response = await fetch(`${BASE_URL}${endpoint}`, options);
+      // Enforce HTTP-only content negotiation headers on every request
+      const baseHeaders = new Headers(options && options.headers ? options.headers : {});
+      baseHeaders.set('Accept', 'application/json');
+      baseHeaders.set('X-OZ-Capabilities', 'http-only');
+
+      const mergedOptions = { ...(options || {}), headers: baseHeaders };
+
+      const response = await fetch(\`${BASE_URL}\${endpoint}\`, mergedOptions);
+      // Explicitly reject any streaming/SSE responses
+      const contentType = (response.headers.get('content-type') || '').toLowerCase();
+      if (contentType.includes('text/event-stream')) {
+        recordFailure();
+        return {
+          ok: false,
+          status: 406,
+          error: true,
+          data: {
+            error: 'SSE_NOT_SUPPORTED',
+            message: 'Received text/event-stream but the extension requires JSON (http-only).'
+          }
+        };
+      }
+
       const text = await response.text();
       let data = null;
       try { 
         data = text ? JSON.parse(text) : null; 
       } catch { 
+        // If the body looks like SSE frames, treat as a protocol error
+        if (/^data:\s/m.test(text) || /^event:\s/m.test(text)) {
+          recordFailure();
+          return {
+            ok: false,
+            status: 406,
+            error: true,
+            data: {
+              error: 'SSE_NOT_SUPPORTED',
+              message: 'Detected event-stream framing in response; expected JSON.'
+            }
+          };
+        }
         data = { raw: text }; 
       }
 

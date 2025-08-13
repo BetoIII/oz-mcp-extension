@@ -473,6 +473,11 @@ function isRateLimitedResponse(resp) {
 async function performOzLookup(address) {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage({ type: 'OZ_LOOKUP', address }, (resp) => {
+      if (chrome.runtime.lastError) {
+        ozLog('Background connection failed:', chrome.runtime.lastError.message);
+        resolve({ ok: false, error: true, message: 'Extension not ready' });
+        return;
+      }
       resolve(resp);
     });
   });

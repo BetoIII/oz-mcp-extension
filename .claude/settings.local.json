@@ -8,7 +8,9 @@
       "Bash(node:*)",
       "Bash(git fetch:*)",
       "Bash(git merge:*)",
-      "WebFetch(domain:developer.chrome.com)"
+      "WebFetch(domain:developer.chrome.com)",
+      "Bash(npm test)",
+      "Bash(npm run zip:*)"
     ],
     "deny": []
   }

@@ -3,7 +3,11 @@
 
 // Feature flags
 const FEATURE_FLAGS = {
-  USE_LISTING_ADDRESS_FALLBACK: false, // Set to true to enable listing-address API as fallback
+  // Enable URL-based listing-address fallback to resolve addresses on pages
+  // where a full inline address isn't present (e.g., search results or
+  // dynamically rendered sites like Zillow). This allows the sidebar flow to
+  // proceed by extracting from the current tab URL via the server endpoint.
+  USE_LISTING_ADDRESS_FALLBACK: true,
 };
 
 const BASE_URL = 'https://oz-mcp.vercel.app';
@@ -113,7 +117,7 @@ async function deduplicatedFetch(endpoint, options, params = {}) {
 
       const mergedOptions = { ...(options || {}), headers: baseHeaders };
 
-      const response = await fetch(\`${BASE_URL}\${endpoint}\`, mergedOptions);
+      const response = await fetch(`${BASE_URL}${endpoint}`, mergedOptions);
       // Explicitly reject any streaming/SSE responses
       const contentType = (response.headers.get('content-type') || '').toLowerCase();
       if (contentType.includes('text/event-stream')) {
@@ -292,13 +296,94 @@ async function setCachedResult(key, value) {
   await setLocal({ [STORAGE_KEYS.CACHE]: cache });
 }
 
+// Auth data model and utilities
+let authState = {
+  token: null,
+  expiresAt: null,
+  usageLimit: 5,
+  usedCount: 0,
+  isRegistered: false,
+  issuedAt: null,
+  nextResetAt: null
+};
+
+let authMeta = {
+  lastError: null,
+  overLimit: false,
+  circuitBreaker: {
+    state: 'CLOSED',
+    nextAttempt: 0
+  }
+};
+
+// Initialize auth state on startup
+async function initializeAuthState() {
+  const { [STORAGE_KEYS.AUTH]: stored } = await getLocal([STORAGE_KEYS.AUTH]);
+  if (stored) {
+    authState = { ...authState, ...stored };
+  }
+  // Update circuit breaker state in auth meta
+  authMeta.circuitBreaker = {
+    state: circuitBreakerState.state,
+    nextAttempt: circuitBreakerState.nextAttempt
+  };
+  broadcastAuthStatus();
+}
+
+// Save auth state to storage
+async function saveAuthState() {
+  await setLocal({ [STORAGE_KEYS.AUTH]: authState });
+}
+
+// Broadcast auth status to all listeners
+function broadcastAuthStatus() {
+  // Update circuit breaker info in meta
+  authMeta.circuitBreaker = {
+    state: circuitBreakerState.state,
+    nextAttempt: circuitBreakerState.nextAttempt
+  };
+  
+  chrome.runtime.sendMessage({
+    type: 'OZ_AUTH_STATUS',
+    auth: authState,
+    meta: authMeta
+  }).catch(() => {
+    // Ignore errors from inactive listeners
+  });
+}
+
+// Track usage from server response headers or increment locally
+function trackUsage(fetchResult, wasFromCache = false) {
+  if (wasFromCache) return; // Don't track cached results
+  
+  // For successful requests, increment usage count
+  // (Server headers would be available in the actual fetch response, but our 
+  // deduplicatedFetch wrapper doesn't expose them - we'll use fallback counting)
+  if (fetchResult && fetchResult.ok && !fetchResult.error) {
+    authState.usedCount = Math.min(authState.usedCount + 1, authState.usageLimit);
+    saveAuthState();
+    broadcastAuthStatus();
+  }
+}
+
+// Handle rate limit response
+function handleRateLimit(response) {
+  authMeta.overLimit = true;
+  authState.usedCount = authState.usageLimit; // Mark as fully used
+  saveAuthState();
+  broadcastAuthStatus();
+}
+
 // Auth token lifecycle: use stored API key or fetch a temporary key
 async function getAuthToken() {
-  const { [STORAGE_KEYS.AUTH]: auth } = await getLocal([STORAGE_KEYS.AUTH]);
   const now = Date.now();
-  if (auth && auth.token && (!auth.expiresAt || now < auth.expiresAt - 60_000)) {
-    return auth.token;
+  if (authState.token && (!authState.expiresAt || now < authState.expiresAt - 60_000)) {
+    return authState.token;
   }
+
+  // Clear auth meta errors before attempting new request
+  authMeta.lastError = null;
+  authMeta.overLimit = false;
 
   // fetch temporary key using deduplicated request
   const result = await deduplicatedFetch(TEMP_KEY_ENDPOINT, {
@@ -310,16 +395,51 @@ async function getAuthToken() {
   }, { endpoint: 'temp_key' });
 
   if (result.error) {
-    throw new Error(`Failed to retrieve temporary key: ${result.status}`);
+    authMeta.lastError = `Failed to retrieve temporary key: ${result.status}`;
+    broadcastAuthStatus();
+    throw new Error(authMeta.lastError);
   }
   
-  const { token, expiresAt, usageLimit } = result.data;
-  await setLocal({ [STORAGE_KEYS.AUTH]: { token, expiresAt: expiresAt ? Date.parse(expiresAt) : null, usageLimit } });
+  const { token, expiresAt, usageLimit, isRegistered } = result.data;
+  authState = {
+    token,
+    expiresAt: expiresAt ? Date.parse(expiresAt) : null,
+    usageLimit: usageLimit || 5,
+    usedCount: 0, // Reset usage count on new token
+    isRegistered: isRegistered || false,
+    issuedAt: now,
+    nextResetAt: expiresAt ? Date.parse(expiresAt) : null
+  };
+  
+  await saveAuthState();
+  broadcastAuthStatus();
   return token;
 }
 
+// Force refresh temporary key
+async function requestNewTempKey() {
+  // Clear current auth state
+  authState = {
+    token: null,
+    expiresAt: null,
+    usageLimit: 5,
+    usedCount: 0,
+    isRegistered: false,
+    issuedAt: null,
+    nextResetAt: null
+  };
+  authMeta.overLimit = false;
+  authMeta.lastError = null;
+  
+  await saveAuthState();
+  broadcastAuthStatus();
+  
+  // Fetch new token
+  return await getAuthToken();
+}
+
 async function openUpgradeTab() {
-  chrome.tabs.create({ url: `${BASE_URL}/pricing?upgrade=chrome` });
+  chrome.tabs.create({ url: `${BASE_URL}/signup?source=ext` });
 }
 
 // Safe send to content script: resolves false if no receiver
@@ -355,12 +475,16 @@ async function resolveAddressFromUrl(listingUrl) {
     }, { url: listingUrl });
 
     if (result.status === 429) {
+      handleRateLimit(result);
       const code = result.data?.code || 'RATE_LIMITED';
       return { error: true, status: 429, code, message: 'Rate limited' };
     }
     if (result.error) {
       return { error: true, status: result.status, message: result.data?.message || 'Failed to extract address' };
     }
+    
+    // Track usage for successful listing-address API calls
+    trackUsage(result);
 
     const candidate = (result.data && (
       result.data.address ||
@@ -461,12 +585,16 @@ async function normalizeAddressViaGeocode(address) {
     }, { address });
 
     if (result.status === 429) {
+      handleRateLimit(result);
       const code = result.data?.code || 'RATE_LIMITED';
       return { error: true, status: 429, code, message: 'Rate limited' };
     }
     if (result.error) {
       return { error: true, status: result.status, message: result.data?.message || 'Failed to normalize address' };
     }
+    
+    // Track usage for successful geocode API calls
+    trackUsage(result);
     
     const normalized = result.data?.normalizedAddress || result.data?.address || null;
     return { address: normalized || address, meta: result.data?.meta };
@@ -780,6 +908,7 @@ async function performOzLookup(params) {
     }, params);
 
     if (result.status === 429) {
+      handleRateLimit(result);
       const code = result.data?.code || 'RATE_LIMITED';
       return { error: true, status: 429, code, message: 'Rate limited' };
     }
@@ -789,6 +918,10 @@ async function performOzLookup(params) {
     if (result.error) {
       return { error: true, status: result.status, message: 'Request failed' };
     }
+    
+    // Track successful usage (result object has headers in the raw fetch response)
+    trackUsage(result);
+    
     return result.data || {};
   } catch (err) {
     return { error: true, status: 0, message: 'Network error' };
@@ -798,6 +931,38 @@ async function performOzLookup(params) {
 // Primary message router
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) return;
+  
+  // Handle auth status requests
+  if (message.type === 'OZ_GET_AUTH_STATUS') {
+    authMeta.circuitBreaker = {
+      state: circuitBreakerState.state,
+      nextAttempt: circuitBreakerState.nextAttempt
+    };
+    sendResponse({ auth: authState, meta: authMeta });
+    return;
+  }
+  
+  // Handle request for new temporary key
+  if (message.type === 'OZ_REQUEST_NEW_TEMP_KEY') {
+    (async () => {
+      try {
+        await requestNewTempKey();
+        sendResponse({ success: true });
+      } catch (e) {
+        authMeta.lastError = 'Failed to get new key';
+        broadcastAuthStatus();
+        sendResponse({ success: false, error: e.message });
+      }
+    })();
+    return true; // async response
+  }
+  
+  // Handle upgrade action
+  if (message.type === 'OZ_OPEN_UPGRADE') {
+    openUpgradeTab();
+    sendResponse({ ok: true });
+    return;
+  }
   
   // Handle sidebar-initiated scan
   if (message.type === 'OZ_START_SCAN') {
@@ -917,5 +1082,6 @@ chrome.action.onClicked.addListener(async (tab) => {
   }
 });
 
-// Initialize circuit breaker state on startup
+// Initialize circuit breaker state and auth on startup
 loadCircuitBreakerState();
+initializeAuthState();

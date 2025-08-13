@@ -5,13 +5,27 @@ class OZSidebar {
         this.currentStep = null;
         this.currentAddress = null;
         this.isProcessing = false;
+        this.authState = null;
+        this.authMeta = null;
         
         this.initializeElements();
         this.attachEventListeners();
         this.resetSteps();
+        this.requestAuthStatus();
     }
 
     initializeElements() {
+        // Usage elements
+        this.usageSection = document.getElementById('usageSection');
+        this.usageText = document.getElementById('usageText');
+        this.usageBar = document.getElementById('usageBar');
+        this.usageProgress = document.getElementById('usageProgress');
+        this.usageDetails = document.getElementById('usageDetails');
+        this.reloadKeyBtn = document.getElementById('reloadKeyBtn');
+        this.upgradeBtn = document.getElementById('upgradeBtn');
+        this.upgradedActions = document.getElementById('upgradedActions');
+        this.reloadAfterUpgradeBtn = document.getElementById('reloadAfterUpgradeBtn');
+        
         // Steps
         this.stepScan = document.getElementById('step-scan');
         this.stepConfirm = document.getElementById('step-confirm');
@@ -45,6 +59,12 @@ class OZSidebar {
     }
 
     attachEventListeners() {
+        // Usage buttons
+        this.reloadKeyBtn.addEventListener('click', () => this.reloadKey());
+        this.upgradeBtn.addEventListener('click', () => this.openUpgrade());
+        this.reloadAfterUpgradeBtn.addEventListener('click', () => this.reloadAfterUpgrade());
+        
+        // Main action buttons
         this.scanPageBtn.addEventListener('click', () => this.startScan());
         this.editAddressBtn.addEventListener('click', () => this.editAddress());
         this.resetBtn.addEventListener('click', () => this.reset());
@@ -91,6 +111,9 @@ class OZSidebar {
 
     handleMessage(message) {
         switch (message.type) {
+            case 'OZ_AUTH_STATUS':
+                this.updateAuthStatus(message.auth, message.meta);
+                break;
             case 'OZ_SIDEBAR_STEP':
                 this.updateStep(message.step, message.status, message.data);
                 break;
@@ -103,6 +126,117 @@ class OZSidebar {
             case 'OZ_SIDEBAR_ERROR':
                 this.showError(message.error);
                 break;
+        }
+    }
+
+    // Auth status management
+    async requestAuthStatus() {
+        try {
+            const response = await chrome.runtime.sendMessage({ type: 'OZ_GET_AUTH_STATUS' });
+            this.updateAuthStatus(response.auth, response.meta);
+        } catch (error) {
+            console.error('Failed to get auth status:', error);
+        }
+    }
+
+    updateAuthStatus(auth, meta) {
+        this.authState = auth;
+        this.authMeta = meta;
+        this.renderUsageStatus();
+    }
+
+    renderUsageStatus() {
+        if (!this.authState || !this.authMeta) {
+            this.usageText.textContent = 'Loading...';
+            return;
+        }
+
+        const { usedCount, usageLimit, isRegistered, expiresAt } = this.authState;
+        const { overLimit, lastError, circuitBreaker } = this.authMeta;
+
+        // Handle different states
+        if (lastError) {
+            this.usageText.textContent = 'Error loading status';
+            this.usageDetails.textContent = lastError;
+            this.usageBar.style.display = 'none';
+            return;
+        }
+
+        if (circuitBreaker.state === 'OPEN') {
+            this.usageText.textContent = 'Service paused';
+            const retryTime = Math.max(0, Math.ceil((circuitBreaker.nextAttempt - Date.now()) / 1000));
+            this.usageDetails.textContent = retryTime > 0 ? `Retry in ${retryTime}s` : 'Retrying...';
+            this.usageBar.style.display = 'none';
+            return;
+        }
+
+        // Show usage bar
+        this.usageBar.style.display = 'block';
+        const percentage = Math.min((usedCount / usageLimit) * 100, 100);
+        this.usageProgress.style.width = `${percentage}%`;
+
+        // Set usage text and styling
+        this.usageText.textContent = `${usedCount}/${usageLimit} searches used`;
+        
+        if (overLimit || usedCount >= usageLimit) {
+            this.usageText.textContent = `${usageLimit}/${usageLimit} searches used`;
+            this.usageDetails.textContent = 'Over limit — upgrade for more';
+            this.usageProgress.className = 'usage-progress over-limit';
+            this.upgradedActions.classList.remove('hidden');
+        } else {
+            this.usageProgress.className = 'usage-progress';
+            this.upgradedActions.classList.add('hidden');
+            
+            // Show expiry info if available
+            if (expiresAt) {
+                const expiryDate = new Date(expiresAt);
+                const now = new Date();
+                if (expiryDate > now) {
+                    const timeLeft = Math.ceil((expiryDate - now) / (1000 * 60 * 60)); // hours
+                    this.usageDetails.textContent = `Expires in ${timeLeft}h`;
+                } else {
+                    this.usageDetails.textContent = 'Expired — reload key';
+                }
+            } else {
+                this.usageDetails.textContent = isRegistered ? 'Registered account' : 'Temporary key';
+            }
+        }
+    }
+
+    // Usage actions
+    async reloadKey() {
+        this.reloadKeyBtn.disabled = true;
+        this.reloadKeyBtn.innerHTML = '<span class="btn-icon spinner"></span>';
+        
+        try {
+            await chrome.runtime.sendMessage({ type: 'OZ_REQUEST_NEW_TEMP_KEY' });
+        } catch (error) {
+            console.error('Failed to reload key:', error);
+        } finally {
+            this.reloadKeyBtn.disabled = false;
+            this.reloadKeyBtn.innerHTML = '<span class="btn-icon">🔄</span>';
+        }
+    }
+
+    async openUpgrade() {
+        try {
+            await chrome.runtime.sendMessage({ type: 'OZ_OPEN_UPGRADE' });
+        } catch (error) {
+            console.error('Failed to open upgrade:', error);
+        }
+    }
+
+    async reloadAfterUpgrade() {
+        this.reloadAfterUpgradeBtn.disabled = true;
+        this.reloadAfterUpgradeBtn.textContent = 'Reloading...';
+        
+        try {
+            await chrome.runtime.sendMessage({ type: 'OZ_REQUEST_NEW_TEMP_KEY' });
+        } catch (error) {
+            console.error('Failed to reload after upgrade:', error);
+        } finally {
+            this.reloadAfterUpgradeBtn.disabled = false;
+            this.reloadAfterUpgradeBtn.textContent = 'I\'ve upgraded — reload';
         }
     }
 

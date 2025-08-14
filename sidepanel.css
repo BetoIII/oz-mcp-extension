@@ -410,6 +410,36 @@ body {
     color: #495057;
 }
 
+.result-actions {
+    margin-top: 12px;
+}
+
+.maps-btn {
+    width: 100%;
+    padding: 10px 14px;
+    background: #4285f4;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    transition: all 0.2s;
+}
+
+.maps-btn:hover {
+    background: #3367d6;
+}
+
+.maps-btn:disabled {
+    background: #adb5bd;
+    cursor: not-allowed;
+}
+
 /* Action Buttons */
 .action-buttons {
     margin-bottom: 24px;

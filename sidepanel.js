@@ -56,6 +56,7 @@ class OZSidebar {
         this.resetBtn = document.getElementById('resetBtn');
         this.closeResultBtn = document.getElementById('closeResultBtn');
         this.closeSidebar = document.getElementById('closeSidebar');
+        this.viewOnMapsBtn = document.getElementById('viewOnMapsBtn');
     }
 
     attachEventListeners() {
@@ -70,6 +71,7 @@ class OZSidebar {
         this.resetBtn.addEventListener('click', () => this.reset());
         this.closeResultBtn.addEventListener('click', () => this.clearResults());
         this.closeSidebar.addEventListener('click', () => this.closeSidePanel());
+        this.viewOnMapsBtn.addEventListener('click', () => this.openInGoogleMaps());
         
         // Listen for messages from background script
         chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -310,6 +312,9 @@ class OZSidebar {
         this.resetScanButton();
         this.resetBtn.classList.remove('hidden');
         
+        // Store the current address for Google Maps functionality
+        this.lastResult = result;
+        
         // Configure result card
         this.resultCard.className = 'result-card';
         this.resultIcon.className = 'result-icon';
@@ -440,6 +445,30 @@ class OZSidebar {
         // Note: Chrome side panels can't be closed programmatically by the extension
         // This button is for UI consistency but won't actually close the panel
         
+    }
+
+    // Generate Google Maps URL for the current address
+    generateGoogleMapsUrl(address) {
+        if (!address) return null;
+        
+        // Encode the address for URL usage
+        const encodedAddress = encodeURIComponent(address);
+        
+        // Generate Google Maps URL
+        return `https://www.google.com/maps/search/?api=1&query=${encodedAddress}`;
+    }
+
+    // Open current address in Google Maps
+    openInGoogleMaps() {
+        if (!this.currentAddress) {
+            return;
+        }
+        
+        const mapsUrl = this.generateGoogleMapsUrl(this.currentAddress);
+        if (mapsUrl) {
+            // Open in new tab
+            chrome.tabs.create({ url: mapsUrl });
+        }
     }
 }
 

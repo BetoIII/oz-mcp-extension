@@ -1,5 +1,23 @@
 // OZ-MCP Sidebar Panel JavaScript
 
+// Initialize dark mode support
+function initializeDarkMode() {
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
+    
+    function updateDarkMode(e) {
+        document.documentElement.classList.toggle('dark', e.matches);
+    }
+    
+    // Set initial state
+    updateDarkMode(prefersDark);
+    
+    // Listen for changes
+    prefersDark.addEventListener('change', updateDarkMode);
+}
+
+// Initialize dark mode immediately
+initializeDarkMode();
+
 class OZSidebar {
     constructor() {
         this.currentStep = null;

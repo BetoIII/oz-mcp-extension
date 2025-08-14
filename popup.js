@@ -1,3 +1,21 @@
+// Initialize dark mode support for popup
+function initializeDarkMode() {
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
+    
+    function updateDarkMode(e) {
+        document.documentElement.classList.toggle('dark', e.matches);
+    }
+    
+    // Set initial state
+    updateDarkMode(prefersDark);
+    
+    // Listen for changes
+    prefersDark.addEventListener('change', updateDarkMode);
+}
+
+// Initialize dark mode immediately
+initializeDarkMode();
+
 document.addEventListener('DOMContentLoaded', function() {
     const actionBtn = document.getElementById('actionBtn');
     const status = document.getElementById('status');

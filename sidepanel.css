@@ -236,6 +236,19 @@ body {
     border-color: var(--oz-turquoise-hover);
 }
 
+.usage-action-btn.alert {
+    background: var(--oz-error);
+    border-color: var(--oz-error);
+    color: var(--oz-white);
+    animation: oz-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.usage-action-btn.alert:hover {
+    background: var(--oz-error-hover);
+    border-color: var(--oz-error-hover);
+    animation: none;
+}
+
 .usage-action-btn:disabled {
     background: var(--oz-background-secondary);
     border-color: var(--oz-border);
@@ -283,6 +296,16 @@ body {
     margin-top: var(--oz-space-3);
     padding-top: var(--oz-space-3);
     border-top: 1px solid var(--oz-border-light);
+}
+
+.usage-upgraded-actions .primary-btn {
+    background: var(--oz-error);
+    animation: oz-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.usage-upgraded-actions .primary-btn:hover {
+    background: var(--oz-error-hover);
+    animation: none;
 }
 
 /* Sections */

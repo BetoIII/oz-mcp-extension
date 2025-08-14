@@ -196,6 +196,19 @@
   box-shadow: var(--oz-shadow-md);
 }
 
+.oz-btn-alert {
+  background: var(--oz-error);
+  color: var(--oz-white);
+  box-shadow: var(--oz-shadow-sm);
+  animation: oz-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.oz-btn-alert:hover:not(:disabled) {
+  background: var(--oz-error-hover);
+  box-shadow: var(--oz-shadow-md);
+  animation: none;
+}
+
 .oz-btn-secondary {
   background: var(--oz-surface);
   color: var(--oz-text-primary);

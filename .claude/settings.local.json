@@ -20,7 +20,8 @@
       "Bash(npx playwright test:*)",
       "Bash(npx playwright:*)",
       "Bash(npm run e2e:*)",
-      "Bash(open /Users/betojuareziii/Applications/oz-mcp-extension/test_styling.html)"
+      "Bash(open /Users/betojuareziii/Applications/oz-mcp-extension/test_styling.html)",
+      "Bash(open /Users/betojuareziii/Applications/oz-mcp-extension/test_out_of_searches.html)"
     ],
     "deny": [],
     "defaultMode": "acceptEdits"

@@ -25,6 +25,7 @@ class OZSidebar {
         this.isProcessing = false;
         this.authState = null;
         this.authMeta = null;
+        this.isOutOfSearches = false;
         
         this.initializeElements();
         this.attachEventListeners();
@@ -42,6 +43,7 @@ class OZSidebar {
         this.reloadKeyBtn = document.getElementById('reloadKeyBtn');
         this.upgradeBtn = document.getElementById('upgradeBtn');
         this.upgradedActions = document.getElementById('upgradedActions');
+        this.getMoreSearchesBtn = document.getElementById('getMoreSearchesBtn');
         this.reloadAfterUpgradeBtn = document.getElementById('reloadAfterUpgradeBtn');
         
         // Steps
@@ -81,6 +83,7 @@ class OZSidebar {
         // Usage buttons
         this.reloadKeyBtn.addEventListener('click', () => this.reloadKey());
         this.upgradeBtn.addEventListener('click', () => this.openUpgrade());
+        this.getMoreSearchesBtn.addEventListener('click', () => this.openPricingPage());
         this.reloadAfterUpgradeBtn.addEventListener('click', () => this.reloadAfterUpgrade());
         
         // Main action buttons
@@ -203,9 +206,21 @@ class OZSidebar {
             this.usageDetails.textContent = 'Over limit — upgrade for more';
             this.usageProgress.className = 'usage-progress over-limit';
             this.upgradedActions.classList.remove('hidden');
+            
+            // Update upgrade button for out-of-searches state
+            this.upgradeBtn.className = 'usage-action-btn alert';
+            this.upgradeBtn.title = 'Get more free searches';
+            this.upgradeBtn.innerHTML = '<span class="btn-icon">⚠️</span>';
+            this.isOutOfSearches = true;
         } else {
             this.usageProgress.className = 'usage-progress';
             this.upgradedActions.classList.add('hidden');
+            
+            // Restore normal upgrade button state
+            this.upgradeBtn.className = 'usage-action-btn primary';
+            this.upgradeBtn.title = 'Upgrade to 15/month';
+            this.upgradeBtn.innerHTML = '<span class="btn-icon">⬆️</span>';
+            this.isOutOfSearches = false;
             
             // Show expiry info if available
             if (expiresAt) {
@@ -240,9 +255,19 @@ class OZSidebar {
 
     async openUpgrade() {
         try {
+            // Use existing upgrade flow for normal upgrades
             await chrome.runtime.sendMessage({ type: 'OZ_OPEN_UPGRADE' });
         } catch (error) {
             console.error('Failed to open upgrade:', error);
+        }
+    }
+
+    async openPricingPage() {
+        try {
+            // Open pricing page in new tab
+            await chrome.tabs.create({ url: 'https://oz-mcp.vercel.app/pricing' });
+        } catch (error) {
+            console.error('Failed to open pricing page:', error);
         }
     }
 

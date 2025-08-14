@@ -10,8 +10,18 @@
       "Bash(git merge:*)",
       "WebFetch(domain:developer.chrome.com)",
       "Bash(npm test)",
-      "Bash(npm run zip:*)"
+      "Bash(npm run zip:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm run lint)",
+      "Bash(open /Users/betojuareziii/Applications/oz-mcp-extension/test_maps.html)",
+      "Bash(rm:*)",
+      "Bash(git commit:*)",
+      "Bash(mv:*)",
+      "Bash(npx playwright test:*)",
+      "Bash(npx playwright:*)",
+      "Bash(npm run e2e:*)"
     ],
-    "deny": []
+    "deny": [],
+    "defaultMode": "acceptEdits"
   }
 }

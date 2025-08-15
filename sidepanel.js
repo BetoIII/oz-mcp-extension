@@ -44,7 +44,6 @@ class OZSidebar {
         this.upgradeBtn = document.getElementById('upgradeBtn');
         this.upgradedActions = document.getElementById('upgradedActions');
         this.getMoreSearchesBtn = document.getElementById('getMoreSearchesBtn');
-        this.reloadAfterUpgradeBtn = document.getElementById('reloadAfterUpgradeBtn');
         
         // Steps
         this.stepScan = document.getElementById('step-scan');
@@ -84,7 +83,6 @@ class OZSidebar {
         this.reloadKeyBtn.addEventListener('click', () => this.reloadKey());
         this.upgradeBtn.addEventListener('click', () => this.openUpgrade());
         this.getMoreSearchesBtn.addEventListener('click', () => this.openPricingPage());
-        this.reloadAfterUpgradeBtn.addEventListener('click', () => this.reloadAfterUpgrade());
         
         // Main action buttons
         this.scanPageBtn.addEventListener('click', () => this.startScan());
@@ -271,19 +269,7 @@ class OZSidebar {
         }
     }
 
-    async reloadAfterUpgrade() {
-        this.reloadAfterUpgradeBtn.disabled = true;
-        this.reloadAfterUpgradeBtn.textContent = 'Reloading...';
-        
-        try {
-            await chrome.runtime.sendMessage({ type: 'OZ_REQUEST_NEW_TEMP_KEY' });
-        } catch (error) {
-            console.error('Failed to reload after upgrade:', error);
-        } finally {
-            this.reloadAfterUpgradeBtn.disabled = false;
-            this.reloadAfterUpgradeBtn.textContent = 'I\'ve upgraded — reload';
-        }
-    }
+
 
     setStep(stepName, status) {
         // Remove active/completed classes from all steps

@@ -318,6 +318,23 @@ body {
     animation: none;
 }
 
+.sign-in-link {
+    display: block;
+    text-align: center;
+    font-size: var(--oz-text-xs);
+    color: var(--oz-text-muted);
+    text-decoration: none;
+    padding: var(--oz-space-2);
+    border-radius: var(--oz-radius-md);
+    transition: all var(--oz-duration-normal) ease;
+}
+
+.sign-in-link:hover {
+    color: var(--oz-turquoise);
+    background: rgba(64, 224, 208, 0.05);
+    text-decoration: underline;
+}
+
 /* Sections */
 .section-title {
     font-weight: var(--oz-font-semibold);

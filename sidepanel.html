@@ -20,35 +20,7 @@
 
         <!-- Content -->
         <div class="sidebar-content">
-            <!-- Usage Status -->
-            <div class="usage-section" id="usageSection">
-                <div class="usage-header">
-                    <div class="usage-title">Usage</div>
-                    <div class="usage-actions">
-                        <button class="usage-action-btn" id="reloadKeyBtn" title="Reload key">
-                            <span class="btn-icon">🔄</span>
-                        </button>
-                        <button class="usage-action-btn primary" id="upgradeBtn" title="Upgrade to 15/month">
-                            <span class="btn-icon">⬆️</span>
-                        </button>
-                    </div>
-                </div>
-                <div class="usage-display">
-                    <div class="usage-text" id="usageText">Loading...</div>
-                    <div class="usage-bar" id="usageBar">
-                        <div class="usage-progress" id="usageProgress"></div>
-                    </div>
-                </div>
-                <div class="usage-details" id="usageDetails"></div>
-                <div class="usage-upgraded-actions hidden" id="upgradedActions">
-                    <button class="primary-btn" id="getMoreSearchesBtn" style="margin-bottom: 8px;">
-                        Get More Free Searches
-                    </button>
-                    <button class="secondary-btn" id="reloadAfterUpgradeBtn">
-                        I've upgraded — reload
-                    </button>
-                </div>
-            </div>
+            <div class="main-content">
 
             <!-- Steps Progress -->
             <div class="steps-container">
@@ -126,13 +98,44 @@
                 </button>
             </div>
 
-            <!-- Info Section -->
-            <div class="info-section">
-                <div class="info-item">
-                    <div class="info-label">What are Opportunity Zones?</div>
-                    <div class="info-description">
-                        Tax-advantaged areas designated to encourage investment in low-income communities.
+                <!-- Info Section -->
+                <div class="info-section">
+                    <div class="info-item">
+                        <div class="info-label">What are Opportunity Zones?</div>
+                        <div class="info-description">
+                            Tax-advantaged areas designated to encourage investment in low-income communities.
+                        </div>
                     </div>
+                </div>
+            </div>
+
+            <!-- Usage Status - Fixed at bottom -->
+            <div class="usage-section" id="usageSection">
+                <div class="usage-header">
+                    <div class="usage-title">Usage</div>
+                    <div class="usage-actions">
+                        <button class="usage-action-btn" id="reloadKeyBtn" title="Reload key">
+                            <span class="btn-icon">🔄</span>
+                        </button>
+                        <button class="usage-action-btn primary" id="upgradeBtn" title="Upgrade to 15/month">
+                            <span class="btn-icon">⬆️</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="usage-display">
+                    <div class="usage-text" id="usageText">Loading...</div>
+                    <div class="usage-bar" id="usageBar">
+                        <div class="usage-progress" id="usageProgress"></div>
+                    </div>
+                </div>
+                <div class="usage-details" id="usageDetails"></div>
+                <div class="usage-upgraded-actions hidden" id="upgradedActions">
+                    <button class="primary-btn" id="getMoreSearchesBtn" style="margin-bottom: 8px;">
+                        Get More Free Searches
+                    </button>
+                    <button class="secondary-btn" id="reloadAfterUpgradeBtn">
+                        I've upgraded — reload
+                    </button>
                 </div>
             </div>
         </div>

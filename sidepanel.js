@@ -1,17 +1,50 @@
 // OZ-MCP Sidebar Panel JavaScript
 
+// Initialize dark mode support
+function initializeDarkMode() {
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
+    
+    function updateDarkMode(e) {
+        document.documentElement.classList.toggle('dark', e.matches);
+    }
+    
+    // Set initial state
+    updateDarkMode(prefersDark);
+    
+    // Listen for changes
+    prefersDark.addEventListener('change', updateDarkMode);
+}
+
+// Initialize dark mode immediately
+initializeDarkMode();
+
 class OZSidebar {
     constructor() {
         this.currentStep = null;
         this.currentAddress = null;
         this.isProcessing = false;
+        this.authState = null;
+        this.authMeta = null;
+        this.isOutOfSearches = false;
         
         this.initializeElements();
         this.attachEventListeners();
         this.resetSteps();
+        this.requestAuthStatus();
     }
 
     initializeElements() {
+        // Usage elements
+        this.usageSection = document.getElementById('usageSection');
+        this.usageText = document.getElementById('usageText');
+        this.usageBar = document.getElementById('usageBar');
+        this.usageProgress = document.getElementById('usageProgress');
+        this.usageDetails = document.getElementById('usageDetails');
+        this.reloadKeyBtn = document.getElementById('reloadKeyBtn');
+        this.upgradeBtn = document.getElementById('upgradeBtn');
+        this.upgradedActions = document.getElementById('upgradedActions');
+        this.getMoreSearchesBtn = document.getElementById('getMoreSearchesBtn');
+        
         // Steps
         this.stepScan = document.getElementById('step-scan');
         this.stepConfirm = document.getElementById('step-confirm');
@@ -42,14 +75,22 @@ class OZSidebar {
         this.resetBtn = document.getElementById('resetBtn');
         this.closeResultBtn = document.getElementById('closeResultBtn');
         this.closeSidebar = document.getElementById('closeSidebar');
+        this.viewOnMapsBtn = document.getElementById('viewOnMapsBtn');
     }
 
     attachEventListeners() {
+        // Usage buttons
+        this.reloadKeyBtn.addEventListener('click', () => this.reloadKey());
+        this.upgradeBtn.addEventListener('click', () => this.openUpgrade());
+        this.getMoreSearchesBtn.addEventListener('click', () => this.openPricingPage());
+        
+        // Main action buttons
         this.scanPageBtn.addEventListener('click', () => this.startScan());
         this.editAddressBtn.addEventListener('click', () => this.editAddress());
         this.resetBtn.addEventListener('click', () => this.reset());
         this.closeResultBtn.addEventListener('click', () => this.clearResults());
         this.closeSidebar.addEventListener('click', () => this.closeSidePanel());
+        this.viewOnMapsBtn.addEventListener('click', () => this.openInGoogleMaps());
         
         // Listen for messages from background script
         chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -91,6 +132,9 @@ class OZSidebar {
 
     handleMessage(message) {
         switch (message.type) {
+            case 'OZ_AUTH_STATUS':
+                this.updateAuthStatus(message.auth, message.meta);
+                break;
             case 'OZ_SIDEBAR_STEP':
                 this.updateStep(message.step, message.status, message.data);
                 break;
@@ -105,6 +149,127 @@ class OZSidebar {
                 break;
         }
     }
+
+    // Auth status management
+    async requestAuthStatus() {
+        try {
+            const response = await chrome.runtime.sendMessage({ type: 'OZ_GET_AUTH_STATUS' });
+            this.updateAuthStatus(response.auth, response.meta);
+        } catch (error) {
+            console.error('Failed to get auth status:', error);
+        }
+    }
+
+    updateAuthStatus(auth, meta) {
+        this.authState = auth;
+        this.authMeta = meta;
+        this.renderUsageStatus();
+    }
+
+    renderUsageStatus() {
+        if (!this.authState || !this.authMeta) {
+            this.usageText.textContent = 'Loading...';
+            return;
+        }
+
+        const { usedCount, usageLimit, isRegistered, expiresAt } = this.authState;
+        const { overLimit, lastError, circuitBreaker } = this.authMeta;
+
+        // Handle different states
+        if (lastError) {
+            this.usageText.textContent = 'Error loading status';
+            this.usageDetails.textContent = lastError;
+            this.usageBar.style.display = 'none';
+            return;
+        }
+
+        if (circuitBreaker.state === 'OPEN') {
+            this.usageText.textContent = 'Service paused';
+            const retryTime = Math.max(0, Math.ceil((circuitBreaker.nextAttempt - Date.now()) / 1000));
+            this.usageDetails.textContent = retryTime > 0 ? `Retry in ${retryTime}s` : 'Retrying...';
+            this.usageBar.style.display = 'none';
+            return;
+        }
+
+        // Show usage bar
+        this.usageBar.style.display = 'block';
+        const percentage = Math.min((usedCount / usageLimit) * 100, 100);
+        this.usageProgress.style.width = `${percentage}%`;
+
+        // Set usage text and styling
+        this.usageText.textContent = `${usedCount}/${usageLimit} searches used`;
+        
+        if (overLimit || usedCount >= usageLimit) {
+            this.usageText.textContent = `${usageLimit}/${usageLimit} searches used`;
+            this.usageDetails.textContent = 'Over limit — upgrade for more';
+            this.usageProgress.className = 'usage-progress over-limit';
+            this.upgradedActions.classList.remove('hidden');
+            
+            // Update upgrade button for out-of-searches state
+            this.upgradeBtn.className = 'usage-action-btn alert';
+            this.upgradeBtn.title = 'Get more free searches';
+            this.upgradeBtn.innerHTML = '<span class="btn-icon">⚠️</span>';
+            this.isOutOfSearches = true;
+        } else {
+            this.usageProgress.className = 'usage-progress';
+            this.upgradedActions.classList.add('hidden');
+            
+            // Restore normal upgrade button state
+            this.upgradeBtn.className = 'usage-action-btn primary';
+            this.upgradeBtn.title = 'Upgrade to 15/month';
+            this.upgradeBtn.innerHTML = '<span class="btn-icon">⬆️</span>';
+            this.isOutOfSearches = false;
+            
+            // Show expiry info if available
+            if (expiresAt) {
+                const expiryDate = new Date(expiresAt);
+                const now = new Date();
+                if (expiryDate > now) {
+                    const timeLeft = Math.ceil((expiryDate - now) / (1000 * 60 * 60)); // hours
+                    this.usageDetails.textContent = `Expires in ${timeLeft}h`;
+                } else {
+                    this.usageDetails.textContent = 'Expired — reload key';
+                }
+            } else {
+                this.usageDetails.textContent = isRegistered ? 'Registered account' : 'Temporary key';
+            }
+        }
+    }
+
+    // Usage actions
+    async reloadKey() {
+        this.reloadKeyBtn.disabled = true;
+        this.reloadKeyBtn.innerHTML = '<span class="btn-icon spinner"></span>';
+        
+        try {
+            await chrome.runtime.sendMessage({ type: 'OZ_REQUEST_NEW_TEMP_KEY' });
+        } catch (error) {
+            console.error('Failed to reload key:', error);
+        } finally {
+            this.reloadKeyBtn.disabled = false;
+            this.reloadKeyBtn.innerHTML = '<span class="btn-icon">🔄</span>';
+        }
+    }
+
+    async openUpgrade() {
+        try {
+            // Use existing upgrade flow for normal upgrades
+            await chrome.runtime.sendMessage({ type: 'OZ_OPEN_UPGRADE' });
+        } catch (error) {
+            console.error('Failed to open upgrade:', error);
+        }
+    }
+
+    async openPricingPage() {
+        try {
+            // Open pricing page in new tab
+            await chrome.tabs.create({ url: 'https://oz-mcp.vercel.app/pricing' });
+        } catch (error) {
+            console.error('Failed to open pricing page:', error);
+        }
+    }
+
+
 
     setStep(stepName, status) {
         // Remove active/completed classes from all steps
@@ -175,6 +340,9 @@ class OZSidebar {
         this.isProcessing = false;
         this.resetScanButton();
         this.resetBtn.classList.remove('hidden');
+        
+        // Store the current address for Google Maps functionality
+        this.lastResult = result;
         
         // Configure result card
         this.resultCard.className = 'result-card';
@@ -306,6 +474,30 @@ class OZSidebar {
         // Note: Chrome side panels can't be closed programmatically by the extension
         // This button is for UI consistency but won't actually close the panel
         
+    }
+
+    // Generate Google Maps URL for the current address
+    generateGoogleMapsUrl(address) {
+        if (!address) return null;
+        
+        // Encode the address for URL usage
+        const encodedAddress = encodeURIComponent(address);
+        
+        // Generate Google Maps URL
+        return `https://www.google.com/maps/search/?api=1&query=${encodedAddress}`;
+    }
+
+    // Open current address in Google Maps
+    openInGoogleMaps() {
+        if (!this.currentAddress) {
+            return;
+        }
+        
+        const mapsUrl = this.generateGoogleMapsUrl(this.currentAddress);
+        if (mapsUrl) {
+            // Open in new tab
+            chrome.tabs.create({ url: mapsUrl });
+        }
     }
 }
 

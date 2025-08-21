@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OZ-MCP Opportunity Zone Checker</title>
+    <link rel="stylesheet" href="design-system.css">
     <link rel="stylesheet" href="sidepanel.css">
 </head>
 <body>
@@ -19,6 +20,8 @@
 
         <!-- Content -->
         <div class="sidebar-content">
+            <div class="main-content">
+
             <!-- Steps Progress -->
             <div class="steps-container">
                 <div class="step" id="step-scan">
@@ -76,6 +79,12 @@
                     </div>
                     <button class="close-result-btn" id="closeResultBtn" title="Clear results">×</button>
                 </div>
+                <div class="result-actions">
+                    <button class="maps-btn" id="viewOnMapsBtn" title="View address on Google Maps">
+                        <span class="btn-icon">🗺️</span>
+                        <span>View on Google Maps</span>
+                    </button>
+                </div>
             </div>
 
             <!-- Action Buttons -->
@@ -89,13 +98,44 @@
                 </button>
             </div>
 
-            <!-- Info Section -->
-            <div class="info-section">
-                <div class="info-item">
-                    <div class="info-label">What are Opportunity Zones?</div>
-                    <div class="info-description">
-                        Tax-advantaged areas designated to encourage investment in low-income communities.
+                <!-- Info Section -->
+                <div class="info-section">
+                    <div class="info-item">
+                        <div class="info-label">What are Opportunity Zones?</div>
+                        <div class="info-description">
+                            Tax-advantaged areas designated to encourage investment in low-income communities.
+                        </div>
                     </div>
+                </div>
+            </div>
+
+            <!-- Usage Status - Fixed at bottom -->
+            <div class="usage-section" id="usageSection">
+                <div class="usage-header">
+                    <div class="usage-title">Usage</div>
+                    <div class="usage-actions">
+                        <button class="usage-action-btn" id="reloadKeyBtn" title="Reload key">
+                            <span class="btn-icon">🔄</span>
+                        </button>
+                        <button class="usage-action-btn primary" id="upgradeBtn" title="Upgrade to 15/month">
+                            <span class="btn-icon">⬆️</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="usage-display">
+                    <div class="usage-text" id="usageText">Loading...</div>
+                    <div class="usage-bar" id="usageBar">
+                        <div class="usage-progress" id="usageProgress"></div>
+                    </div>
+                </div>
+                <div class="usage-details" id="usageDetails"></div>
+                <div class="usage-upgraded-actions hidden" id="upgradedActions">
+                    <button class="primary-btn" id="getMoreSearchesBtn" style="margin-bottom: 8px;">
+                        Get Free Searches
+                    </button>
+                    <a href="https://oz-mcp.vercel.app/dashboard" target="_blank" class="sign-in-link">
+                        Already have an account? Sign in here.
+                    </a>
                 </div>
             </div>
         </div>

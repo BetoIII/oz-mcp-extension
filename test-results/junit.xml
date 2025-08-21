@@ -1,0 +1,36 @@
+<testsuites id="" name="" tests="13" failures="0" skipped="0" errors="0" time="12.104986">
+<testsuite name="address-selectors.spec.ts" timestamp="2025-08-14T19:18:58.652Z" hostname="working-tests" tests="4" failures="0" skipped="0" time="3.759" errors="0">
+<testcase name="Address Selector Detection › should find Zillow address selectors" classname="address-selectors.spec.ts" time="1.088">
+</testcase>
+<testcase name="Address Selector Detection › should find Realtor address selectors" classname="address-selectors.spec.ts" time="0.905">
+</testcase>
+<testcase name="Address Selector Detection › should find LoopNet commercial address selectors" classname="address-selectors.spec.ts" time="0.914">
+</testcase>
+<testcase name="Address Selector Detection › should handle pages with no address elements" classname="address-selectors.spec.ts" time="0.852">
+</testcase>
+</testsuite>
+<testsuite name="chrome-api-mocking.spec.ts" timestamp="2025-08-14T19:18:58.652Z" hostname="working-tests" tests="3" failures="0" skipped="0" time="2.537" errors="0">
+<testcase name="Chrome API Mocking › should provide chrome.runtime APIs" classname="chrome-api-mocking.spec.ts" time="0.866">
+</testcase>
+<testcase name="Chrome API Mocking › should handle chrome APIs gracefully" classname="chrome-api-mocking.spec.ts" time="0.83">
+</testcase>
+<testcase name="Chrome API Mocking › should allow mock setup without errors" classname="chrome-api-mocking.spec.ts" time="0.841">
+</testcase>
+</testsuite>
+<testsuite name="extension-core.spec.ts" timestamp="2025-08-14T19:18:58.652Z" hostname="working-tests" tests="3" failures="0" skipped="0" time="2.508" errors="0">
+<testcase name="Core Extension Functionality › should load extension and inject core components" classname="extension-core.spec.ts" time="0.83">
+</testcase>
+<testcase name="Core Extension Functionality › should inject and detect test addresses" classname="extension-core.spec.ts" time="0.847">
+</testcase>
+<testcase name="Core Extension Functionality › should have working debug utilities" classname="extension-core.spec.ts" time="0.831">
+</testcase>
+</testsuite>
+<testsuite name="site-detection.spec.ts" timestamp="2025-08-14T19:18:58.652Z" hostname="working-tests" tests="3" failures="0" skipped="0" time="2.535" errors="0">
+<testcase name="Site Detection › should detect Zillow.com correctly" classname="site-detection.spec.ts" time="0.813">
+</testcase>
+<testcase name="Site Detection › should detect Realtor.com correctly" classname="site-detection.spec.ts" time="0.815">
+</testcase>
+<testcase name="Site Detection › should handle generic sites" classname="site-detection.spec.ts" time="0.907">
+</testcase>
+</testsuite>
+</testsuites>

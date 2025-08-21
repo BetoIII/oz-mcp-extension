@@ -32,6 +32,238 @@ const SCAN_DEBOUNCE_MS = 1200; // increased debounce time
 const BETWEEN_CHECK_DELAY_MS = 2000; // increased serialize delay to 2s
 const RATE_LIMIT_BACKOFF_MS = 90 * 1000; // 90s pause on 429/GEOCODER_RATE_LIMITED
 const REQUEST_DEBOUNCE_MS = 500; // debounce duplicate requests
+// Site-specific configurations for major real estate platforms
+const SITE_CONFIGS = {
+  // Residential Sites
+  'zillow.com': {
+    addressSelectors: [
+      '[data-test="property-card-addr"]',
+      '.list-card-addr',
+      '.hdp__sc-qmn92k-1',
+      'h1[class*="Text-"]',
+      '[data-testid="bdp-property-address"]',
+      '.summary-address',
+      '[class*="StyledPropertyCardDataArea"] a',
+      '.property-address'
+    ],
+    extractionStrategy: 'standard',
+    waitForSelector: '[data-test="property-card-addr"], .list-card-addr',
+    scanDelay: 1000
+  },
+  
+  'realtor.com': {
+    addressSelectors: [
+      '[data-testid="card-address"]',
+      '.rui__sc-119fdwq-0',
+      '[data-label="property-address"]',
+      '.ldp-header-address-wrapper',
+      '.jsx-11645185.full-address',
+      '[class*="styles__AddressWrapper"]',
+      '.home-summary-row span[itemprop="streetAddress"]',
+      '[data-testid="property-meta-address"]'
+    ],
+    extractionStrategy: 'realtor',
+    waitForSelector: '[data-testid="card-address"], .ldp-header-address-wrapper',
+    scanDelay: 1500
+  },
+  
+  'redfin.com': {
+    addressSelectors: [
+      '.homecardV2Address',
+      '.street-address',
+      '[data-rf-test-id="abp-streetLine"]',
+      '.full-address',
+      '.homeAddressV2',
+      '[class*="AddressSection"]',
+      '.bp-cityStateZip',
+      '[data-rf-test-name="abp-streetLine"]',
+      '.HomeDetailsHeader .full-address'
+    ],
+    extractionStrategy: 'redfin',
+    waitForSelector: '.homecardV2Address, .street-address',
+    scanDelay: 1200
+  },
+  
+  // Commercial Sites
+  'loopnet.com': {
+    addressSelectors: [
+      '.placard-address',
+      '.property-address',
+      '[data-id="property-address"]',
+      '.header-col-1 h1',
+      '.breadcrumbs__crumb:last-child',
+      '[class*="property-header"] [class*="address"]',
+      '.summary-address',
+      '.placard-content-wrap .placard-address-tagline'
+    ],
+    extractionStrategy: 'loopnet',
+    waitForSelector: '.placard-address, .property-address',
+    scanDelay: 1000
+  },
+  
+  'crexi.com': {
+    addressSelectors: [
+      '[data-testid="property-address"]',
+      '.property-header__address',
+      '.listing-address',
+      '.MuiTypography-root.MuiTypography-h6',
+      '[class*="PropertyAddress"]',
+      '.property-details-header__address',
+      '[class*="ListingCard"] [class*="address"]',
+      '.map-card-address'
+    ],
+    extractionStrategy: 'standard',
+    waitForSelector: '[data-testid="property-address"], .property-header__address',
+    scanDelay: 1500
+  },
+  
+  'commercialsearch.com': {
+    addressSelectors: [
+      '.property-address',
+      '.listing-detail-address',
+      '[class*="address-line"]',
+      '.property-header address',
+      '.property-summary__address',
+      '[data-cy="property-address"]',
+      '.listing-card__address',
+      '.detail-header__address'
+    ],
+    extractionStrategy: 'costar',
+    waitForSelector: '.property-address, .listing-detail-address',
+    scanDelay: 1200
+  }
+};
+
+// Extraction strategies for different sites
+const EXTRACTION_STRATEGIES = {
+  'standard': (element) => {
+    return cleanAddressText(element.textContent.trim());
+  },
+  
+  'realtor': (element) => {
+    const addressParts = [];
+    const streetAddress = element.querySelector('[itemprop="streetAddress"]');
+    const locality = element.querySelector('[itemprop="addressLocality"]');
+    const region = element.querySelector('[itemprop="addressRegion"]');
+    const postalCode = element.querySelector('[itemprop="postalCode"]');
+    
+    if (streetAddress) {
+      addressParts.push(streetAddress.textContent.trim());
+      if (locality) addressParts.push(locality.textContent.trim());
+      if (region && postalCode) {
+        addressParts.push(`${region.textContent.trim()} ${postalCode.textContent.trim()}`);
+      }
+    } else {
+      return cleanAddressText(element.textContent.trim());
+    }
+    
+    return cleanAddressText(addressParts.join(', '));
+  },
+  
+  'redfin': (element) => {
+    const parts = [];
+    const streetElement = element.querySelector('.street-address') || 
+                         element.querySelector('[data-rf-test-id="abp-streetLine"]');
+    const cityStateZip = element.querySelector('.cityStateZip') || 
+                        element.querySelector('.bp-cityStateZip');
+    
+    if (streetElement) parts.push(streetElement.textContent.trim());
+    if (cityStateZip) parts.push(cityStateZip.textContent.trim());
+    
+    if (parts.length === 0) {
+      return cleanAddressText(element.textContent.trim());
+    }
+    
+    return cleanAddressText(parts.join(', '));
+  },
+  
+  'loopnet': (element) => {
+    const addressLine1 = element.querySelector('.address-line-1');
+    const addressLine2 = element.querySelector('.address-line-2');
+    
+    if (addressLine1 && addressLine2) {
+      return cleanAddressText(`${addressLine1.textContent.trim()}, ${addressLine2.textContent.trim()}`);
+    }
+    
+    if (element.classList.contains('breadcrumbs__crumb')) {
+      const text = element.textContent.trim();
+      return cleanAddressText(text.replace(/^Properties in\s+/i, ''));
+    }
+    
+    return cleanAddressText(element.textContent.trim());
+  },
+  
+  'costar': (element) => {
+    const lines = element.querySelectorAll('[class*="address-line"]');
+    if (lines.length > 0) {
+      return cleanAddressText(Array.from(lines).map(l => l.textContent.trim()).join(', '));
+    }
+    
+    if (element.tagName === 'ADDRESS') {
+      const spans = element.querySelectorAll('span');
+      if (spans.length > 0) {
+        return cleanAddressText(Array.from(spans).map(s => s.textContent.trim()).join(', '));
+      }
+    }
+    
+    return cleanAddressText(element.textContent.trim());
+  }
+};
+
+// Clean and normalize address text
+function cleanAddressText(address) {
+  return address
+    .replace(/\s+/g, ' ')
+    .replace(/^[,\s]+|[,\s]+$/g, '')
+    .replace(/,,+/g, ',')
+    .replace(/\|/g, ',')
+    .replace(/\s*,\s*/g, ', ')
+    .trim();
+}
+
+// Get current site configuration
+function getCurrentSiteConfig() {
+  const hostname = window.location.hostname.replace('www.', '');
+  
+  if (SITE_CONFIGS[hostname]) {
+    return { ...SITE_CONFIGS[hostname], siteName: hostname };
+  }
+  
+  for (const [site, config] of Object.entries(SITE_CONFIGS)) {
+    if (hostname.endsWith(site)) {
+      return { ...config, siteName: site };
+    }
+  }
+  
+  return {
+    addressSelectors: ['.address', '.property-address', '[class*="address"]'],
+    extractionStrategy: 'standard',
+    waitForSelector: null,
+    scanDelay: 1000,
+    siteName: 'generic'
+  };
+}
+
+// Helper function to wait for element
+function waitForElement(selector, timeout = 5000) {
+  return new Promise((resolve, reject) => {
+    const startTime = Date.now();
+    
+    const checkElement = () => {
+      const element = document.querySelector(selector);
+      if (element) {
+        resolve(element);
+      } else if (Date.now() - startTime > timeout) {
+        reject(new Error(`Timeout waiting for ${selector}`));
+      } else {
+        requestAnimationFrame(checkElement);
+      }
+    };
+    
+    checkElement();
+  });
+}
+
 const scannedAddresses = new Set();
 let checksUsed = 0;
 let scanLoadingToast = null;
@@ -323,32 +555,391 @@ function ensureStyles() {
         const style = document.createElement('style');
         style.id = 'oz-mcp-styles';
         style.textContent = `
-.oz-mcp-badge{display:inline-flex;align-items:center;gap:4px;background:#1abc9c;color:#fff;border-radius:10px;padding:2px 6px;font-size:11px;font-weight:600;box-shadow:0 1px 4px rgba(0,0,0,.2);margin-left:6px;vertical-align:baseline;}
-.oz-mcp-badge:hover .oz-mcp-tooltip{opacity:1;visibility:visible}
-.oz-mcp-badge.loading{background:#3498db;animation:pulse 1.5s infinite;}
-.oz-mcp-tooltip{position:absolute;transform:translateY(6px);background:#111;color:#fff;padding:6px 8px;border-radius:6px;font-size:11px;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.3);opacity:0;visibility:hidden;transition:opacity .15s;z-index:2147483647}
-.oz-mcp-toast{position:fixed;z-index:2147483647;left:50%;transform:translateX(-50%);bottom:24px;background:#111;color:#fff;padding:10px 14px;border-radius:8px;font-size:13px;box-shadow:0 4px 16px rgba(0,0,0,.35)}
-.oz-mcp-toast.loading{background:#3498db;}
-.oz-mcp-spinner{display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,.3);border-radius:50%;border-top-color:#fff;animation:spin 1s linear infinite;margin-right:6px;}
-@keyframes spin{to{transform:rotate(360deg)}}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
-/* Confirm toast near icon */
-.oz-mcp-confirm{position:fixed;z-index:2147483647;right:12px;top:12px;background:#111;color:#fff;padding:10px 12px;border-radius:10px;font-size:13px;box-shadow:0 6px 20px rgba(0,0,0,.35);display:flex;gap:8px;align-items:center;max-width:92vw}
-.oz-mcp-confirm .addr{font-weight:600;}
-.oz-mcp-confirm input{background:#1a1a1a;border:1px solid #333;color:#fff;border-radius:8px;padding:8px 10px;font-size:12px;min-width:260px}
-.oz-mcp-confirm .btn{border:none;border-radius:8px;padding:8px 10px;font-size:12px;cursor:pointer}
-.oz-mcp-confirm .btn.ok{background:#1abc9c;color:#fff}
-.oz-mcp-confirm .btn.edit{background:#333;color:#fff}
-.oz-mcp-confirm .tag{font-size:10px;background:#1f2937;color:#9ca3af;border-radius:999px;padding:2px 6px}
+/* OZ-MCP Badge - Modern Design System */
+.oz-mcp-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: linear-gradient(135deg, #40E0D0 0%, #3b82f6 100%);
+  color: #ffffff;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.24);
+  margin-left: 8px;
+  vertical-align: baseline;
+  cursor: help;
+  transition: all 200ms ease;
+}
+
+.oz-mcp-badge:hover {
+  transform: scale(1.05);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.16), 0 2px 4px rgba(0, 0, 0, 0.32);
+}
+
+.oz-mcp-badge:hover .oz-mcp-tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+
+.oz-mcp-badge.loading {
+  background: #3b82f6;
+  animation: oz-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Tooltip */
+.oz-mcp-tooltip {
+  position: absolute;
+  transform: translateY(6px);
+  background: #1f2937;
+  color: #f9fafb;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15), 0 4px 6px rgba(0, 0, 0, 0.1);
+  opacity: 0;
+  visibility: hidden;
+  transition: all 150ms ease;
+  z-index: 2147483647;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Toast Notifications */
+.oz-mcp-toast {
+  position: fixed;
+  z-index: 2147483647;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 24px;
+  max-width: 320px;
+  background: #ffffff;
+  color: #1f2937;
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1), 0 4px 6px rgba(0, 0, 0, 0.05);
+  border: 1px solid #e5e7eb;
+  animation: slideInUp 300ms ease;
+}
+
+.oz-mcp-toast.loading {
+  background: #3b82f6;
+  color: #ffffff;
+  border-color: #2563eb;
+}
+
+.oz-mcp-toast.success {
+  background: #10b981;
+  color: #ffffff;
+  border-color: #059669;
+}
+
+.oz-mcp-toast.error {
+  background: #ef4444;
+  color: #ffffff;
+  border-color: #dc2626;
+}
+
+/* Confirm Dialog */
+.oz-mcp-confirm {
+  position: fixed;
+  z-index: 2147483647;
+  top: 20px;
+  right: 20px;
+  max-width: 320px;
+  background: #ffffff;
+  color: #1f2937;
+  padding: 16px;
+  border-radius: 12px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  box-shadow: 0 20px 25px rgba(0, 0, 0, 0.15), 0 8px 10px rgba(0, 0, 0, 0.1);
+  border: 1px solid #e5e7eb;
+  animation: slideInDown 300ms ease;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.oz-mcp-confirm .addr {
+  font-weight: 600;
+  color: #374151;
+}
+
+.oz-mcp-confirm input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 12px;
+  background: #f9fafb;
+  transition: all 150ms ease;
+  box-sizing: border-box;
+}
+
+.oz-mcp-confirm input:focus {
+  outline: none;
+  border-color: #3b82f6;
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.oz-mcp-confirm .btn {
+  padding: 6px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  margin-right: 8px;
+  transition: all 150ms ease;
+}
+
+.oz-mcp-confirm .btn.ok {
+  background: #3b82f6;
+  color: #ffffff;
+  border-color: #3b82f6;
+}
+
+.oz-mcp-confirm .btn.ok:hover {
+  background: #2563eb;
+  border-color: #2563eb;
+}
+
+.oz-mcp-confirm .btn.edit {
+  background: #f9fafb;
+  color: #6b7280;
+}
+
+.oz-mcp-confirm .btn.edit:hover {
+  background: #f3f4f6;
+  color: #4b5563;
+}
+
+.oz-mcp-confirm .tag {
+  font-size: 10px;
+  background: #f3f4f6;
+  color: #6b7280;
+  border-radius: 999px;
+  padding: 2px 6px;
+  display: inline-block;
+}
+
 /* Prompt overlay */
-.oz-mcp-prompt-overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:2147483646;display:flex;align-items:center;justify-content:center}
-.oz-mcp-prompt{background:#111;color:#fff;min-width:300px;max-width:92vw;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.4);padding:14px}
-.oz-mcp-prompt h4{margin:0 0 8px 0;font-size:14px;font-weight:600}
-.oz-mcp-prompt input{width:100%;box-sizing:border-box;border-radius:8px;border:1px solid #333;background:#1a1a1a;color:#fff;padding:10px 12px;font-size:13px;outline:none}
-.oz-mcp-prompt .row{display:flex;gap:8px;margin-top:10px;justify-content:flex-end}
-.oz-mcp-btn{border:none;border-radius:8px;padding:8px 12px;font-size:12px;cursor:pointer}
-.oz-mcp-btn.cancel{background:#333;color:#fff}
-.oz-mcp-btn.ok{background:#1abc9c;color:#fff}
+.oz-mcp-prompt-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 2147483646;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(4px);
+}
+
+.oz-mcp-prompt {
+  background: #ffffff;
+  color: #1f2937;
+  min-width: 300px;
+  max-width: 92vw;
+  border-radius: 12px;
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.25);
+  padding: 24px;
+  border: 1px solid #e5e7eb;
+}
+
+.oz-mcp-prompt h4 {
+  margin: 0 0 12px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.oz-mcp-prompt input {
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 8px;
+  border: 1px solid #d1d5db;
+  background: #ffffff;
+  color: #111827;
+  padding: 12px 16px;
+  font-size: 14px;
+  outline: none;
+  transition: all 150ms ease;
+}
+
+.oz-mcp-prompt input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.oz-mcp-prompt .row {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+  justify-content: flex-end;
+}
+
+.oz-mcp-btn {
+  border: none;
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.oz-mcp-btn.cancel {
+  background: #f9fafb;
+  color: #6b7280;
+  border: 1px solid #d1d5db;
+}
+
+.oz-mcp-btn.cancel:hover {
+  background: #f3f4f6;
+  color: #4b5563;
+}
+
+.oz-mcp-btn.ok {
+  background: #3b82f6;
+  color: #ffffff;
+}
+
+.oz-mcp-btn.ok:hover {
+  background: #2563eb;
+}
+
+/* Spinner */
+.oz-mcp-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  border-top-color: #ffffff;
+  animation: oz-spin 600ms linear infinite;
+  margin-right: 6px;
+}
+
+/* Animations */
+@keyframes oz-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes oz-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes slideInUp {
+  from {
+    transform: translate(-50%, 100%);
+    opacity: 0;
+  }
+  to {
+    transform: translate(-50%, 0);
+    opacity: 1;
+  }
+}
+
+@keyframes slideInDown {
+  from {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+  .oz-mcp-toast:not(.loading):not(.success):not(.error) {
+    background: #1f2937;
+    color: #f9fafb;
+    border-color: #374151;
+  }
+  
+  .oz-mcp-confirm {
+    background: #1f2937;
+    color: #f9fafb;
+    border-color: #374151;
+  }
+  
+  .oz-mcp-confirm .addr {
+    color: #d1d5db;
+  }
+  
+  .oz-mcp-confirm input {
+    background: #374151;
+    border-color: #4b5563;
+    color: #f9fafb;
+  }
+  
+  .oz-mcp-confirm input:focus {
+    background: #4b5563;
+    border-color: #3b82f6;
+  }
+  
+  .oz-mcp-confirm .btn.edit {
+    background: #374151;
+    color: #d1d5db;
+    border-color: #4b5563;
+  }
+  
+  .oz-mcp-confirm .btn.edit:hover {
+    background: #4b5563;
+    color: #f9fafb;
+  }
+  
+  .oz-mcp-confirm .tag {
+    background: #374151;
+    color: #9ca3af;
+  }
+  
+  .oz-mcp-prompt {
+    background: #1f2937;
+    color: #f9fafb;
+    border-color: #374151;
+  }
+  
+  .oz-mcp-prompt h4 {
+    color: #f9fafb;
+  }
+  
+  .oz-mcp-prompt input {
+    background: #374151;
+    border-color: #4b5563;
+    color: #f9fafb;
+  }
+  
+  .oz-mcp-prompt input:focus {
+    background: #4b5563;
+    border-color: #3b82f6;
+  }
+  
+  .oz-mcp-btn.cancel {
+    background: #374151;
+    color: #d1d5db;
+    border-color: #4b5563;
+  }
+  
+  .oz-mcp-btn.cancel:hover {
+    background: #4b5563;
+    color: #f9fafb;
+  }
+}
 `;
   document.head.appendChild(style);
 }
@@ -473,6 +1064,11 @@ function isRateLimitedResponse(resp) {
 async function performOzLookup(address) {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage({ type: 'OZ_LOOKUP', address }, (resp) => {
+      if (chrome.runtime.lastError) {
+        ozLog('Background connection failed:', chrome.runtime.lastError.message);
+        resolve({ ok: false, error: true, message: 'Extension not ready' });
+        return;
+      }
       resolve(resp);
     });
   });
@@ -555,9 +1151,8 @@ async function processQueue() {
   }
 }
 
-function scanForAddresses() {
+async function scanForAddresses() {
   if (checksUsed >= MAX_CHECKS_PER_PAGE) {
-    // Hide scan loading toast if all checks used
     if (scanLoadingToast && scanLoadingToast.parentElement) {
       scanLoadingToast.remove();
       scanLoadingToast = null;
@@ -566,33 +1161,76 @@ function scanForAddresses() {
   }
   if (isPaused()) return;
   if (manualLookupInProgress) return;
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      const text = (node.nodeValue || '').trim();
-      if (!text || text.length > 200) return NodeFilter.FILTER_REJECT;
-      if (!ADDRESS_REGEX.test(text)) return NodeFilter.FILTER_SKIP;
-      const parent = node.parentElement;
-      if (!parent || !isVisible(parent)) return NodeFilter.FILTER_SKIP;
-      return NodeFilter.FILTER_ACCEPT;
-    },
-  });
-
+  
+  const config = getCurrentSiteConfig();
+  ozLog(`Scanning for addresses using ${config.siteName} configuration`);
+  
+  // Wait for dynamic content if needed
+  if (config.waitForSelector) {
+    try {
+      await waitForElement(config.waitForSelector, 5000);
+      ozLog('Wait selector found, proceeding with scan');
+    } catch (e) {
+      ozLog('Wait selector timeout, continuing with scan');
+    }
+  }
+  
+  // Apply scan delay for dynamic content
+  await new Promise(resolve => setTimeout(resolve, config.scanDelay));
+  
   const candidates = [];
-  while (walker.nextNode()) {
-    const text = walker.currentNode.nodeValue;
-    const m = text.match(ADDRESS_REGEX);
-    if (m) candidates.push(m[0]);
+  
+  // First try site-specific selectors
+  for (const selector of config.addressSelectors) {
+    try {
+      const elements = document.querySelectorAll(selector);
+      
+      for (const element of elements) {
+        if (!element || !element.textContent || !isVisible(element)) continue;
+        
+        const strategy = EXTRACTION_STRATEGIES[config.extractionStrategy] || 
+                        EXTRACTION_STRATEGIES.standard;
+        const address = strategy(element);
+        
+        if (isValidAddress(address)) {
+          candidates.push(address);
+          ozLog('Found address via site selector', { selector, address });
+        }
+      }
+    } catch (error) {
+      ozLog(`Error with selector ${selector}:`, error);
+    }
+  }
+  
+  // Fallback to text walker if no site-specific addresses found
+  if (candidates.length === 0) {
+    ozLog('No site-specific addresses found, falling back to text walker');
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const text = (node.nodeValue || '').trim();
+        if (!text || text.length > 200) return NodeFilter.FILTER_REJECT;
+        if (!ADDRESS_REGEX.test(text)) return NodeFilter.FILTER_SKIP;
+        const parent = node.parentElement;
+        if (!parent || !isVisible(parent)) return NodeFilter.FILTER_SKIP;
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+
+    while (walker.nextNode()) {
+      const text = walker.currentNode.nodeValue;
+      const m = text.match(ADDRESS_REGEX);
+      if (m) candidates.push(m[0]);
+    }
   }
 
   const toEnqueue = dedupeAndLimit(candidates).filter((addr) => !scannedAddresses.has(addr));
   
-  // Debug: Log addresses found during scan
-  if (candidates.length > 0) {
-    
-    
-  }
+  ozLog('Scan results', { 
+    siteName: config.siteName, 
+    candidates: candidates.length, 
+    toEnqueue: toEnqueue.length 
+  });
   
-  // If no addresses found during manual scan, hide loading toast
   if (toEnqueue.length === 0 && scanLoadingToast && scanLoadingToast.parentElement) {
     scanLoadingToast.remove();
     scanLoadingToast = null;
@@ -769,10 +1407,13 @@ observer.observe(document.documentElement, {
 // Scans should only happen when explicitly requested via manual scan or context menu
 ensureStyles();
 ozLog('Content script loaded - automatic scanning disabled');
+const config = getCurrentSiteConfig();
 ozLog('Page info', { 
   url: window.location.href, 
   title: document.title,
-  domain: window.location.hostname 
+  domain: window.location.hostname,
+  siteName: config.siteName,
+  supportedSite: config.siteName !== 'generic'
 });
 
 let contextLoadingToast = null;

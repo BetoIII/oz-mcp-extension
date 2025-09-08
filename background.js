@@ -14,6 +14,7 @@ const BASE_URL = 'https://oz-mcp.vercel.app';
 const CHECK_ENDPOINT = '/api/opportunity-zones/check';
 const LISTING_ADDRESS_ENDPOINT = '/api/listing-address';
 const GEOCODE_ENDPOINT = '/api/opportunity-zones/geocode';
+const SHAPES_ENDPOINT = '/api/opportunity-zones/shapes';
 const TEMP_KEY_ENDPOINT = '/api/temporary-key';
 
 const STORAGE_KEYS = {
@@ -928,6 +929,47 @@ async function performOzLookup(params) {
   }
 }
 
+// Fetch opportunity zone shapes (GeoJSON) for map display
+async function fetchZoneShapes(zoneIds, center) {
+  try {
+    const token = await getAuthToken();
+    
+    const requestBody = {
+      zoneIds: zoneIds,
+      center: center
+    };
+    
+    const result = await deduplicatedFetch(SHAPES_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'X-OZ-Extension': chrome.runtime.getManifest().version || 'unknown',
+      },
+      body: JSON.stringify(requestBody)
+    }, { zoneIds, center });
+
+    if (result.status === 429) {
+      handleRateLimit(result);
+      const code = result.data?.code || 'RATE_LIMITED';
+      return { error: true, status: 429, code, message: 'Rate limited' };
+    }
+    if (result.status >= 500) {
+      return { error: true, status: result.status, message: result.data?.details || 'Service unavailable' };
+    }
+    if (result.error) {
+      return { error: true, status: result.status, message: 'Request failed' };
+    }
+    
+    // Don't track usage for shape requests - these are supplementary to the main lookup
+    // trackUsage(result);
+    
+    return result.data || {};
+  } catch (err) {
+    return { error: true, status: 0, message: 'Network error' };
+  }
+}
+
 // Primary message router
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) return;
@@ -1002,6 +1044,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Immediately acknowledge to avoid keeping the message channel open
     try { sendResponse({ ok: true }); } catch (e) { /* noop */ }
     return; // no async response expected
+  }
+  
+  // Handle zone shapes request for maps
+  if (message.type === 'OZ_GET_ZONE_SHAPES') {
+    (async () => {
+      try {
+        const result = await fetchZoneShapes(message.zoneIds, message.center);
+        sendResponse({ geoJson: result, error: result.error });
+      } catch (e) {
+        
+        sendResponse({ error: true, message: 'Failed to fetch zone shapes' });
+      }
+    })();
+    return true; // async response
   }
   
   // Legacy OZ_LOOKUP for content script automatic scanning

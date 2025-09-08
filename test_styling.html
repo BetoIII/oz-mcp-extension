@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OZ-MCP Map Styling Test</title>
+    <link rel="stylesheet" href="design-system.css">
+    <link rel="stylesheet" href="sidepanel.css">
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: var(--oz-background-secondary);
+            width: 400px; /* Simulate extension sidepanel width */
+        }
+        .test-wrapper {
+            border: 2px solid #ccc;
+            border-radius: 8px;
+            overflow: hidden;
+            background: var(--oz-surface);
+        }
+        h1 {
+            margin: 0 0 20px 0;
+            padding: 20px;
+            background: var(--oz-turquoise);
+            color: white;
+            font-size: 18px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Map Styling Test</h1>
+    
+    <div class="test-wrapper">
+        <!-- Simulate the results section with map -->
+        <div class="results-section">
+            <div class="section-title">Opportunity Zone Status</div>
+            <div class="result-card success">
+                <div class="result-icon success">✓</div>
+                <div class="result-content">
+                    <div class="result-status">In Opportunity Zone</div>
+                    <div class="result-details">Zone ID: 48029110100</div>
+                </div>
+                <button class="close-result-btn" title="Clear results">×</button>
+            </div>
+            
+            <!-- Map Container -->
+            <div class="map-container" id="mapContainer">
+                <div class="map-header">
+                    <div class="section-title">Opportunity Zone Map</div>
+                    <button class="map-toggle-btn" id="mapToggleBtn" title="Hide map">
+                        <span class="btn-icon">📍</span>
+                    </button>
+                </div>
+                <div class="map-wrapper">
+                    <div id="ozMap" class="oz-map" style="background: #e0e0e0; display: flex; align-items: center; justify-content: center; color: #666;">
+                        <div style="text-align: center;">
+                            <div style="font-size: 48px; margin-bottom: 10px;">🗺️</div>
+                            <div>Google Maps would load here</div>
+                        </div>
+                    </div>
+                    <div class="map-loading hidden" id="mapLoading">
+                        <div class="spinner"></div>
+                        <span>Loading map...</span>
+                    </div>
+                    <div class="map-error hidden" id="mapError">
+                        <span class="error-icon">⚠️</span>
+                        <span>Map unavailable</span>
+                    </div>
+                </div>
+                <div class="map-footer">
+                    <button class="map-fullscreen-btn" id="mapFullscreenBtn" title="View in Google Maps">
+                        <span class="btn-icon">🔗</span>
+                        <span>Open in Google Maps</span>
+                    </button>
+                </div>
+            </div>
+            
+            <div class="result-actions">
+                <button class="maps-btn" id="viewOnMapsBtn" title="View address on Google Maps">
+                    <span class="btn-icon">🗺️</span>
+                    <span>View on Google Maps</span>
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <div style="margin-top: 20px; padding: 15px; background: white; border-radius: 8px;">
+        <h3>Test Controls</h3>
+        <button onclick="toggleLoading()" style="margin: 5px; padding: 8px 16px; background: #40E0D0; color: white; border: none; border-radius: 4px; cursor: pointer;">Toggle Loading State</button>
+        <button onclick="toggleError()" style="margin: 5px; padding: 8px 16px; background: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer;">Toggle Error State</button>
+        <button onclick="toggleMap()" style="margin: 5px; padding: 8px 16px; background: #6b7280; color: white; border: none; border-radius: 4px; cursor: pointer;">Toggle Map Visibility</button>
+    </div>
+    
+    <script>
+        function toggleLoading() {
+            const loading = document.getElementById('mapLoading');
+            const map = document.getElementById('ozMap');
+            const error = document.getElementById('mapError');
+            
+            loading.classList.toggle('hidden');
+            if (!loading.classList.contains('hidden')) {
+                map.style.display = 'none';
+                error.classList.add('hidden');
+            } else {
+                map.style.display = 'flex';
+            }
+        }
+        
+        function toggleError() {
+            const loading = document.getElementById('mapLoading');
+            const map = document.getElementById('ozMap');
+            const error = document.getElementById('mapError');
+            
+            error.classList.toggle('hidden');
+            if (!error.classList.contains('hidden')) {
+                map.style.display = 'none';
+                loading.classList.add('hidden');
+            } else {
+                map.style.display = 'flex';
+            }
+        }
+        
+        function toggleMap() {
+            const container = document.getElementById('mapContainer');
+            container.classList.toggle('hidden');
+        }
+    </script>
+</body>
+</html>

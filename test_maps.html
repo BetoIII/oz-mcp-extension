@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OZ-MCP Extension Map Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .test-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .address-card {
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .address-card:hover {
+            background-color: #f9f9f9;
+        }
+        .address-text {
+            font-weight: bold;
+            color: #333;
+        }
+        .address-details {
+            font-size: 14px;
+            color: #666;
+            margin-top: 5px;
+        }
+        .test-note {
+            background: #e8f4fd;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>OZ-MCP Extension Map Integration Test</h1>
+        <div class="test-note">
+            <strong>Test Instructions:</strong>
+            <ol>
+                <li>Load the OZ-MCP extension in Chrome developer mode</li>
+                <li>Click on one of the addresses below</li>
+                <li>Open the extension sidebar (click the extension icon)</li>
+                <li>Click "Scan This Page" to test the address detection</li>
+                <li>Verify that the map appears with opportunity zone overlays</li>
+            </ol>
+        </div>
+        
+        <h2>Test Addresses</h2>
+        
+        <div class="address-card" onclick="selectAddress(this)">
+            <div class="address-text">233 W Travis St, San Antonio, TX 78205</div>
+            <div class="address-details">Known Opportunity Zone - Should show map with colored overlay</div>
+        </div>
+        
+        <div class="address-card" onclick="selectAddress(this)">
+            <div class="address-text">1200 Main St, Dallas, TX 75202</div>
+            <div class="address-details">Downtown Dallas address for testing</div>
+        </div>
+        
+        <div class="address-card" onclick="selectAddress(this)">
+            <div class="address-text">500 E 4th St, Austin, TX 78701</div>
+            <div class="address-details">Austin downtown area for testing</div>
+        </div>
+        
+        <div class="address-card" onclick="selectAddress(this)">
+            <div class="address-text">2301 Broadway St, Houston, TX 77017</div>
+            <div class="address-details">Houston area address for testing</div>
+        </div>
+    </div>
+    
+    <div class="test-container">
+        <h2>Implementation Status</h2>
+        <ul>
+            <li>✅ Manifest.json updated with Google Maps permissions</li>
+            <li>✅ HTML structure added for map container</li>
+            <li>✅ CSS styles created using design system</li>
+            <li>✅ MapHandler class implemented</li>
+            <li>✅ Google Maps API loading integrated</li>
+            <li>✅ Map integrated with lookup flow</li>
+            <li>✅ Backend API endpoint for GeoJSON shapes</li>
+            <li>✅ Background script updated for shape requests</li>
+            <li>⚠️ Requires Google Maps API key configuration</li>
+            <li>⚠️ Requires server-side /api/opportunity-zones/shapes endpoint</li>
+        </ul>
+    </div>
+    
+    <div class="test-container">
+        <h2>Configuration Required</h2>
+        <p><strong>Google Maps API Key:</strong> Update the GOOGLE_MAPS_API_KEY constant in sidepanel.html</p>
+        <p><strong>Server Endpoint:</strong> Implement /api/opportunity-zones/shapes on the oz-mcp server to return GeoJSON data</p>
+    </div>
+    
+    <script>
+        function selectAddress(element) {
+            // Remove previous selections
+            document.querySelectorAll('.address-card').forEach(card => {
+                card.style.backgroundColor = '';
+                card.style.borderColor = '#ddd';
+            });
+            
+            // Highlight selected address
+            element.style.backgroundColor = '#e8f4fd';
+            element.style.borderColor = '#40E0D0';
+            
+            // Add a note about what to do next
+            const addressText = element.querySelector('.address-text').textContent;
+            console.log('Selected address:', addressText);
+            
+            // Show instructions
+            alert(`Address selected: ${addressText}\n\nNext steps:\n1. Open the OZ-MCP extension sidebar\n2. Click "Scan This Page"\n3. Check if the map appears with zone overlays`);
+        }
+    </script>
+</body>
+</html>

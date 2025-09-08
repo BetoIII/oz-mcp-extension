@@ -18,6 +18,306 @@ function initializeDarkMode() {
 // Initialize dark mode immediately
 initializeDarkMode();
 
+// Map Handler Class for Google Maps integration
+class MapHandler {
+    constructor() {
+        this.map = null;
+        this.isMapVisible = false;
+        this.currentAddress = null;
+        this.currentCoords = null;
+        this.currentZones = null;
+        this.addressMarker = null;
+        this.isGoogleMapsReady = false;
+        
+        // Map elements
+        this.mapContainer = document.getElementById('mapContainer');
+        this.mapElement = document.getElementById('ozMap');
+        this.mapLoading = document.getElementById('mapLoading');
+        this.mapError = document.getElementById('mapError');
+        this.mapToggleBtn = document.getElementById('mapToggleBtn');
+        this.mapFullscreenBtn = document.getElementById('mapFullscreenBtn');
+        
+        // Bind event listeners
+        this.mapToggleBtn.addEventListener('click', () => this.toggleMap());
+        this.mapFullscreenBtn.addEventListener('click', () => this.openInGoogleMaps());
+        
+        // Zone colors for visual distinction
+        this.zoneColors = [
+            '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57',
+            '#6C5CE7', '#FD79A8', '#FDCB6E', '#6C5CE7', '#A29BFE'
+        ];
+        this.colorMap = new Map();
+    }
+    
+    onGoogleMapsReady() {
+        this.isGoogleMapsReady = true;
+        if (this.currentCoords && this.isMapVisible) {
+            this.initializeMap();
+        }
+    }
+    
+    async showMap(addressData) {
+        if (!addressData || (!addressData.latitude && !addressData.longitude)) {
+            this.hideMap();
+            return;
+        }
+        
+        this.currentAddress = addressData.address;
+        this.currentCoords = {
+            lat: parseFloat(addressData.latitude),
+            lng: parseFloat(addressData.longitude)
+        };
+        this.currentZones = addressData.opportunityZones || [];
+        
+        // Show map container
+        this.mapContainer.classList.remove('hidden');
+        this.isMapVisible = true;
+        
+        if (this.isGoogleMapsReady) {
+            await this.initializeMap();
+        } else {
+            this.showLoading();
+        }
+    }
+    
+    async initializeMap() {
+        if (!this.currentCoords) return;
+        
+        this.showLoading();
+        
+        try {
+            // Check if Google Maps is available
+            if (!window.google || !window.google.maps) {
+                console.warn('Google Maps API not available - showing placeholder');
+                this.showMapPlaceholder();
+                return;
+            }
+            
+            // Initialize Google Maps
+            this.map = new google.maps.Map(this.mapElement, {
+                center: this.currentCoords,
+                zoom: 14,
+                mapTypeControl: false,
+                streetViewControl: false,
+                fullscreenControl: false,
+                zoomControl: true,
+                mapTypeId: google.maps.MapTypeId.ROADMAP,
+                styles: [
+                    {
+                        featureType: 'poi',
+                        elementType: 'labels',
+                        stylers: [{ visibility: 'off' }]
+                    }
+                ]
+            });
+            
+            // Add marker for the searched address
+            this.addressMarker = new google.maps.Marker({
+                position: this.currentCoords,
+                map: this.map,
+                title: this.currentAddress,
+                icon: {
+                    path: google.maps.SymbolPath.CIRCLE,
+                    scale: 8,
+                    fillColor: '#40E0D0',
+                    fillOpacity: 1,
+                    strokeColor: '#ffffff',
+                    strokeWeight: 2
+                }
+            });
+            
+            // Load opportunity zone shapes if available
+            if (this.currentZones && this.currentZones.length > 0) {
+                await this.loadZoneShapes();
+            }
+            
+            this.hideLoading();
+            
+        } catch (error) {
+            console.error('Failed to initialize map:', error);
+            this.showError();
+        }
+    }
+    
+    async loadZoneShapes() {
+        if (!this.currentZones || this.currentZones.length === 0) return;
+        
+        try {
+            // Extract zone IDs for API call
+            const zoneIds = this.currentZones.map(zone => zone.id || zone.opportunityZoneId).filter(Boolean);
+            
+            if (zoneIds.length === 0) return;
+            
+            // Request GeoJSON data from background script
+            const response = await chrome.runtime.sendMessage({
+                type: 'OZ_GET_ZONE_SHAPES',
+                zoneIds: zoneIds,
+                center: this.currentCoords
+            });
+            
+            if (response && response.geoJson && response.geoJson.features) {
+                this.renderZoneShapes(response.geoJson);
+            }
+            
+        } catch (error) {
+            console.error('Failed to load zone shapes:', error);
+            // Continue without shapes - don't show error for this
+        }
+    }
+    
+    renderZoneShapes(geoJson) {
+        if (!this.map || !geoJson || !geoJson.features) return;
+        
+        const bounds = new google.maps.LatLngBounds();
+        let colorIndex = 0;
+        
+        // Add address marker to bounds
+        bounds.extend(this.currentCoords);
+        
+        // Process each feature
+        geoJson.features.forEach((feature) => {
+            if (feature.geometry && feature.geometry.type === 'Polygon') {
+                const zoneId = feature.properties?.CENSUSTRAC || feature.properties?.id;
+                
+                // Assign color to zone
+                if (!this.colorMap.has(zoneId)) {
+                    this.colorMap.set(zoneId, this.zoneColors[colorIndex % this.zoneColors.length]);
+                    colorIndex++;
+                }
+                
+                const color = this.colorMap.get(zoneId);
+                
+                // Convert coordinates
+                const paths = feature.geometry.coordinates[0].map(coord => ({
+                    lat: coord[1],
+                    lng: coord[0]
+                }));
+                
+                // Create polygon
+                const polygon = new google.maps.Polygon({
+                    paths: paths,
+                    strokeColor: color,
+                    strokeOpacity: 0.8,
+                    strokeWeight: 2,
+                    fillColor: color,
+                    fillOpacity: 0.3,
+                    map: this.map
+                });
+                
+                // Add to bounds
+                paths.forEach(coord => bounds.extend(coord));
+                
+                // Add click listener for info
+                polygon.addListener('click', () => {
+                    const infoWindow = new google.maps.InfoWindow({
+                        content: `
+                            <div style="padding: 8px; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">
+                                <strong>Opportunity Zone</strong><br>
+                                Zone ID: ${zoneId || 'Unknown'}
+                            </div>
+                        `,
+                        position: this.currentCoords
+                    });
+                    infoWindow.open(this.map);
+                });
+            }
+        });
+        
+        // Fit map to show all zones and address
+        this.map.fitBounds(bounds);
+        
+        // Ensure reasonable zoom level
+        google.maps.event.addListenerOnce(this.map, 'bounds_changed', () => {
+            if (this.map.getZoom() > 16) {
+                this.map.setZoom(16);
+            }
+        });
+    }
+    
+    toggleMap() {
+        if (this.isMapVisible) {
+            this.hideMap();
+        } else if (this.currentCoords) {
+            this.showMap({
+                address: this.currentAddress,
+                latitude: this.currentCoords.lat,
+                longitude: this.currentCoords.lng,
+                opportunityZones: this.currentZones
+            });
+        }
+    }
+    
+    hideMap() {
+        this.mapContainer.classList.add('hidden');
+        this.isMapVisible = false;
+        this.mapToggleBtn.innerHTML = '<span class="btn-icon">📍</span>';
+        this.mapToggleBtn.title = 'Show map';
+    }
+    
+    showLoading() {
+        this.mapLoading.classList.remove('hidden');
+        this.mapError.classList.add('hidden');
+        this.mapToggleBtn.innerHTML = '<span class="btn-icon">📍</span>';
+        this.mapToggleBtn.title = 'Hide map';
+    }
+    
+    hideLoading() {
+        this.mapLoading.classList.add('hidden');
+    }
+    
+    showError() {
+        this.mapLoading.classList.add('hidden');
+        this.mapError.classList.remove('hidden');
+    }
+    
+    showMapPlaceholder() {
+        this.hideLoading();
+        this.mapElement.innerHTML = `
+            <div style="height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #f0f0f0; color: #666; text-align: center; padding: 20px;">
+                <div style="font-size: 48px; margin-bottom: 15px;">🗺️</div>
+                <div style="font-weight: 500; margin-bottom: 8px;">Map Preview</div>
+                <div style="font-size: 14px; line-height: 1.4;">
+                    Address: ${this.currentAddress}<br>
+                    Coordinates: ${this.currentCoords.lat.toFixed(6)}, ${this.currentCoords.lng.toFixed(6)}<br>
+                    <span style="color: #40E0D0; font-weight: 500;">
+                        ${this.currentZones && this.currentZones.length > 0 ? 
+                            `✓ ${this.currentZones.length} Opportunity Zone(s)` : 
+                            '○ No zones detected'}
+                    </span>
+                </div>
+                <div style="margin-top: 15px; font-size: 12px; color: #888;">
+                    Configure Google Maps API key to see interactive map
+                </div>
+            </div>
+        `;
+    }
+    
+    openInGoogleMaps() {
+        if (!this.currentCoords || !this.currentAddress) return;
+        
+        const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(this.currentAddress)}`;
+        chrome.tabs.create({ url });
+    }
+    
+    clear() {
+        this.hideMap();
+        this.currentAddress = null;
+        this.currentCoords = null;
+        this.currentZones = null;
+        this.colorMap.clear();
+        
+        if (this.map) {
+            this.map = null;
+        }
+        if (this.addressMarker) {
+            this.addressMarker = null;
+        }
+        
+        // Clear map element content
+        this.mapElement.innerHTML = '';
+    }
+}
+
 class OZSidebar {
     constructor() {
         this.currentStep = null;
@@ -26,6 +326,9 @@ class OZSidebar {
         this.authState = null;
         this.authMeta = null;
         this.isOutOfSearches = false;
+        
+        // Initialize map handler
+        this.mapHandler = new MapHandler();
         
         this.initializeElements();
         this.attachEventListeners();
@@ -365,6 +668,17 @@ class OZSidebar {
         }
         
         this.resultsSection.classList.remove('hidden');
+        
+        // Show map if we have coordinates
+        if (result.latitude && result.longitude) {
+            const mapData = {
+                address: this.currentAddress,
+                latitude: result.latitude,
+                longitude: result.longitude,
+                opportunityZones: result.isInOpportunityZone ? [result] : []
+            };
+            this.mapHandler.showMap(mapData);
+        }
     }
 
     showError(error) {
@@ -445,6 +759,9 @@ class OZSidebar {
         this.resultsSection.classList.add('hidden');
         this.resetBtn.classList.add('hidden');
         this.resetScanButton();
+        
+        // Clear map
+        this.mapHandler.clear();
     }
 
     resetSteps() {

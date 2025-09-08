@@ -11,7 +11,8 @@
     "sidePanel"
   ],
   "host_permissions": [
-    "https://oz-mcp.vercel.app/*"
+    "https://oz-mcp.vercel.app/*",
+    "https://maps.googleapis.com/*"
   ],
   "action": {
     "default_title": "OZ‑MCP: Scan this page",
@@ -27,6 +28,9 @@
   },
   "side_panel": {
     "default_path": "sidepanel.html"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' https://maps.googleapis.com; object-src 'self'"
   },
   "content_scripts": [
     {

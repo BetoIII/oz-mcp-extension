@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OZ-MCP Out of Searches Test</title>
+    <link rel="stylesheet" href="design-system.css">
+    <link rel="stylesheet" href="sidepanel.css">
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: var(--oz-background-secondary);
+            width: 400px;
+        }
+        .test-wrapper {
+            border: 2px solid #ccc;
+            border-radius: 8px;
+            overflow: hidden;
+            background: var(--oz-surface);
+        }
+        h1 {
+            margin: 0 0 20px 0;
+            padding: 20px;
+            background: var(--oz-turquoise);
+            color: white;
+            font-size: 18px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Out of Searches Test</h1>
+    
+    <div class="test-wrapper">
+        <!-- Simulate full sidepanel structure -->
+        <div class="sidebar-container">
+            <!-- Header -->
+            <div class="sidebar-header">
+                <div class="sidebar-title">
+                    <span class="oz-icon">🏢</span>
+                    <span>OZ Checker</span>
+                </div>
+                <button class="close-btn" title="Close sidebar">×</button>
+            </div>
+
+            <!-- Content -->
+            <div class="sidebar-content">
+                <div class="main-content">
+                    <!-- Results Section -->
+                    <div class="results-section">
+                        <div class="section-title">Opportunity Zone Status</div>
+                        <div class="result-card error">
+                            <div class="result-icon error">!</div>
+                            <div class="result-content">
+                                <div class="result-status">Error</div>
+                                <div class="result-details">Over limit — upgrade for more</div>
+                            </div>
+                            <button class="close-result-btn" title="Clear results">×</button>
+                        </div>
+                        
+                        <div class="result-actions">
+                            <button class="maps-btn" disabled title="View address on Google Maps">
+                                <span class="btn-icon">🗺️</span>
+                                <span>View on Google Maps</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Action Buttons -->
+                    <div class="action-buttons">
+                        <button class="primary-btn">
+                            <span class="btn-icon">🔍</span>
+                            <span>Scan This Page</span>
+                        </button>
+                    </div>
+
+                    <!-- Info Section -->
+                    <div class="info-section">
+                        <div class="info-item">
+                            <div class="info-label">What are Opportunity Zones?</div>
+                            <div class="info-description">
+                                Tax-advantaged areas designated to encourage investment in low-income communities.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Usage Status - Fixed at bottom (out of searches state) -->
+                <div class="usage-section">
+                    <div class="usage-header">
+                        <div class="usage-title">Usage</div>
+                        <div class="usage-actions">
+                            <button class="usage-action-btn" title="Reload key">
+                                <span class="btn-icon">🔄</span>
+                            </button>
+                            <button class="usage-action-btn alert" title="Get more free searches">
+                                <span class="btn-icon">⚠️</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="usage-display">
+                        <div class="usage-text">5/5 searches used</div>
+                        <div class="usage-bar">
+                            <div class="usage-progress over-limit" style="width: 100%;"></div>
+                        </div>
+                    </div>
+                    <div class="usage-details">Over limit — upgrade for more</div>
+                    <div class="usage-upgraded-actions">
+                        <button class="primary-btn" style="margin-bottom: 8px;">
+                            Get Free Searches
+                        </button>
+                        <a href="https://oz-mcp.vercel.app/dashboard" target="_blank" class="sign-in-link">
+                            Already have an account? Sign in here.
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div style="margin-top: 20px; padding: 15px; background: white; border-radius: 8px;">
+        <h3>Test Notes</h3>
+        <p>This simulates the extension when a user has exhausted their search quota:</p>
+        <ul>
+            <li>Usage bar shows 100% with red "over-limit" styling</li>
+            <li>Warning button (⚠️) appears with pulsing animation</li>
+            <li>"Get Free Searches" button shows with alert styling</li>
+            <li>Sign-in link appears for existing users</li>
+            <li>Error result shows rate limit message</li>
+            <li>Maps button is disabled in this state</li>
+        </ul>
+    </div>
+</body>
+</html>

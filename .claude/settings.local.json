@@ -21,7 +21,11 @@
       "Bash(npx playwright:*)",
       "Bash(npm run e2e:*)",
       "Bash(open /Users/betojuareziii/Applications/oz-mcp-extension/test_styling.html)",
-      "Bash(open /Users/betojuareziii/Applications/oz-mcp-extension/test_out_of_searches.html)"
+      "Bash(open /Users/betojuareziii/Applications/oz-mcp-extension/test_out_of_searches.html)",
+      "WebFetch(domain:github.com)",
+      "Bash(npm run test:unit:*)",
+      "Bash(npm run test:coverage:*)",
+      "Bash(npm install)"
     ],
     "deny": [],
     "defaultMode": "acceptEdits"

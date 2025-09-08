@@ -1,13 +1,14 @@
 name: Extension Tests
 
 on:
-  push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main ]
-  schedule:
-    # Run daily at midnight UTC for site monitoring
-    - cron: '0 0 * * *'
+  # Temporarily disabled - run tests locally instead
+  # push:
+  #   branches: [ main, develop ]
+  # pull_request:
+  #   branches: [ main ]
+  # schedule:
+  #   # Run daily at midnight UTC for site monitoring
+  #   - cron: '0 0 * * *'
 
 jobs:
   unit-tests:

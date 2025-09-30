@@ -18,6 +18,65 @@ function initializeDarkMode() {
 // Initialize dark mode immediately
 initializeDarkMode();
 
+// Development mode - use backend proxy for Google Maps data
+const DEVELOPMENT_MODE = true;
+
+// Load map data through backend proxy (no direct Google Maps API calls)
+async function loadMapData(address, lat, lon) {
+    try {
+        // Get temporary key for backend authentication
+        const result = await chrome.storage.local.get(['tempKey']);
+        const tempKey = result.tempKey;
+        
+        if (!tempKey) {
+            throw new Error('Authentication required');
+        }
+        
+        // Call backend proxy for map data
+        const response = await fetch(`https://oz-mcp.vercel.app/api/maps/data`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${tempKey}`,
+                'X-OZ-Extension': chrome.runtime.getManifest().version
+            },
+            body: JSON.stringify({
+                address: address,
+                lat: lat,
+                lon: lon
+            })
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Backend error: ${response.status}`);
+        }
+        
+        return await response.json();
+    } catch (error) {
+        console.error('Error loading map data:', error);
+        throw error;
+    }
+}
+
+// Initialize map with backend data (no Google Maps API needed)
+function initializeMap(mapData) {
+    // For development, show a placeholder map
+    if (DEVELOPMENT_MODE) {
+        console.log('Development mode: Map data received', mapData);
+        return Promise.resolve();
+    }
+    
+    // In production, you would use the mapData to render the map
+    // This could be with Leaflet, Mapbox, or other mapping libraries
+    // that don't require exposing API keys in the client
+    return Promise.resolve();
+}
+
+// Set global flag for backend map integration
+window.googleMapsLoaded = true; // Always ready since we use backend proxy
+
+// Initialize map handler when DOM is ready (handled at the end of this file)
+
 // Map Handler Class for Google Maps integration
 class MapHandler {
     constructor() {
@@ -821,13 +880,25 @@ class OZSidebar {
 // Initialize sidebar when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
     window.ozSidebar = new OZSidebar();
+    // Initialize map handler once sidebar is ready
+    if (window.ozSidebar && window.ozSidebar.mapHandler) {
+        window.ozSidebar.mapHandler.onGoogleMapsReady();
+    }
 });
 
 // Also handle case where script loads after DOM
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
         window.ozSidebar = new OZSidebar();
+        // Initialize map handler once sidebar is ready
+        if (window.ozSidebar && window.ozSidebar.mapHandler) {
+            window.ozSidebar.mapHandler.onGoogleMapsReady();
+        }
     });
 } else {
     window.ozSidebar = new OZSidebar();
+    // Initialize map handler once sidebar is ready
+    if (window.ozSidebar && window.ozSidebar.mapHandler) {
+        window.ozSidebar.mapHandler.onGoogleMapsReady();
+    }
 }

@@ -934,20 +934,21 @@ async function fetchZoneShapes(zoneIds, center) {
   try {
     const token = await getAuthToken();
     
+    // Use exact format expected by the new endpoint
     const requestBody = {
-      zoneIds: zoneIds,
-      center: center
+      zone_ids: zoneIds  // Changed from zoneIds to zone_ids to match API spec
+      // Removed center parameter - new endpoint doesn't need it
     };
     
     const result = await deduplicatedFetch(SHAPES_ENDPOINT, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
         'X-OZ-Extension': chrome.runtime.getManifest().version || 'unknown',
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify(requestBody)
-    }, { zoneIds, center });
+    }, { zone_ids: zoneIds });
 
     if (result.status === 429) {
       handleRateLimit(result);

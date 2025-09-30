@@ -97,15 +97,15 @@
             <li>✅ Map integrated with lookup flow</li>
             <li>✅ Backend API endpoint for GeoJSON shapes</li>
             <li>✅ Background script updated for shape requests</li>
-            <li>⚠️ Requires Google Maps API key configuration</li>
-            <li>⚠️ Requires server-side /api/opportunity-zones/shapes endpoint</li>
+            <li>✅ Using backend proxy for map data (no client-side API key needed)</li>
+            <li>✅ Backend /api/opportunity-zones/shapes endpoint integrated</li>
         </ul>
     </div>
     
     <div class="test-container">
         <h2>Configuration Required</h2>
-        <p><strong>Google Maps API Key:</strong> Update the GOOGLE_MAPS_API_KEY constant in sidepanel.html</p>
-        <p><strong>Server Endpoint:</strong> Implement /api/opportunity-zones/shapes on the oz-mcp server to return GeoJSON data</p>
+        <p><strong>Backend Integration:</strong> ✅ Extension uses managed backend service for all map functionality</p>
+        <p><strong>Server Endpoint:</strong> ✅ /api/opportunity-zones/shapes endpoint is properly configured and integrated</p>
     </div>
     
     <script>

@@ -169,48 +169,6 @@
         </div>
     </div>
 
-    <script>
-        // Google Maps API configuration - replace with your API key
-        // For development/testing, you can use a placeholder key or remove this requirement
-        const GOOGLE_MAPS_API_KEY = 'YOUR_GOOGLE_MAPS_API_KEY_HERE';
-        
-        // Development mode - disable API key requirement for testing
-        const DEVELOPMENT_MODE = true;
-        
-        // Load Google Maps API
-        function loadGoogleMapsAPI() {
-            if (window.google && window.google.maps) {
-                return Promise.resolve();
-            }
-            
-            // In development mode, skip actual Google Maps loading and simulate success
-            if (DEVELOPMENT_MODE && GOOGLE_MAPS_API_KEY === 'YOUR_GOOGLE_MAPS_API_KEY_HERE') {
-                console.warn('Development mode: Google Maps API not loaded (no API key configured)');
-                return Promise.resolve();
-            }
-            
-            return new Promise((resolve, reject) => {
-                const script = document.createElement('script');
-                script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&libraries=geometry`;
-                script.async = true;
-                script.defer = true;
-                
-                script.onload = () => resolve();
-                script.onerror = () => reject(new Error('Failed to load Google Maps API'));
-                
-                document.head.appendChild(script);
-            });
-        }
-        
-        // Set global flag when maps are loaded
-        window.googleMapsLoaded = false;
-        loadGoogleMapsAPI().then(() => {
-            window.googleMapsLoaded = true;
-            if (window.ozSidebar && window.ozSidebar.mapHandler) {
-                window.ozSidebar.mapHandler.onGoogleMapsReady();
-            }
-        }).catch(console.error);
-    </script>
     <script src="sidepanel.js"></script>
 </body>
 </html>
